@@ -1,6 +1,7 @@
 # DSH-Remote
 
-手机远程控制本机 DeepSeek Harness (DSH) 的项目。
+手机远程控制本机 DeepSeek Harness (DSH) 的项目。  
+本项目基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 构建，是 DSH 专用远程控制客户端。
 
 > 这是一个脱敏后的公开版本，不包含任何个人 Token、IP、设备信息或本地绝对路径。
 
