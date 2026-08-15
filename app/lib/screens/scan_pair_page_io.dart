@@ -17,8 +17,9 @@ class _ScanPairPageState extends State<ScanPairPage> {
   final PairingService _pairing = PairingService();
 
   bool _busy = false;
-  String _status = '将电脑上生成的配对二维码放入取景框';
   bool _failed = false;
+  int _misses = 0;
+  String _status = '将电脑上生成的配对二维码放入扫描框';
 
   Future<void> _handleRaw(String raw) async {
     if (_busy) return;
@@ -57,6 +58,23 @@ class _ScanPairPageState extends State<ScanPairPage> {
     }
   }
 
+  void _onMiss(Code code) {
+    if (!mounted || _busy) return;
+    _misses += 1;
+    final detail = code.error?.trim() ?? '';
+    if (_failed) return;
+    if (_misses > 20) {
+      setState(() {
+        _status = '持续识别不到？点击左下角相册图标，选择二维码截图也能绑定；'
+            '或让二维码占满整个扫描框、避免反光。\n$detail';
+      });
+    } else if (_misses > 8) {
+      setState(() {
+        _status = '正在识别…请让二维码位于扫描框中央，保持手机稳定';
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -80,39 +98,22 @@ class _ScanPairPageState extends State<ScanPairPage> {
       body: Column(
         children: [
           Expanded(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                ReaderWidget(
-                  onScan: (code) {
-                    final raw = code.text?.trim() ?? '';
-                    if (raw.isNotEmpty) _handleRaw(raw);
-                  },
-                  onScanFailure: (error) {
-                    if (mounted && !_busy && !_failed) {
-                      setState(() {
-                        _failed = true;
-                        _status = '扫码失败：$error';
-                      });
-                    }
-                  },
-                  resolution: ResolutionPreset.high,
-                  lensDirection: CameraLensDirection.back,
-                  scanDelay: const Duration(milliseconds: 700),
-                  tryInverted: true,
-                  tryDownscale: true,
-                ),
-                Center(
-                  child: Container(
-                    width: 260,
-                    height: 260,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: kDshBlue, width: 3),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                  ),
-                ),
-              ],
+            child: ReaderWidget(
+              onScan: (code) {
+                _misses = 0;
+                final raw = code.text?.trim() ?? '';
+                if (raw.isNotEmpty) _handleRaw(raw);
+              },
+              onScanFailure: _onMiss,
+              resolution: ResolutionPreset.high,
+              lensDirection: CameraLensDirection.back,
+              cropPercent: 0.6,
+              scanDelay: const Duration(milliseconds: 500),
+              tryHarder: true,
+              tryRotate: true,
+              tryInverted: true,
+              tryDownscale: true,
+              showScannerOverlay: true,
             ),
           ),
           Container(
