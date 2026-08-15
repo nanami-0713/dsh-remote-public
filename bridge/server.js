@@ -17,6 +17,35 @@ const DEFAULTS = {
   },
 };
 
+/**
+ * Methods that are too dangerous to expose through the phone bridge.
+ * The bridge already runs on the same host as DSH, so DSH's loopback-only
+ * privileged-method protection does not apply to bridge callers.
+ */
+const BLOCKED_METHODS = new Set([
+  // Credentials / settings / secrets
+  'credentials.describe',
+  'credentials.set',
+  'credentials.unset',
+  'settings.describe',
+  'settings.openDocument',
+  'settings.update',
+  'settings.replace',
+  'settings.mutate',
+  // Host file system / native dialogs
+  'host.pickDirectory',
+  'host.listDirectory',
+  'host.createDirectory',
+  'host.openPath',
+  // Agent presets that can read/delete local files or config
+  'agentPreset.read',
+  'agentPreset.copy',
+  'agentPreset.openDocument',
+  'agentPreset.remove',
+  // Model discovery can probe arbitrary URLs / carry credentials
+  'llm.discoverModels',
+]);
+
 function loadConfig() {
   const configPath = process.env.BRIDGE_CONFIG || resolve(process.cwd(), 'config.json');
   let fileConfig = {};
@@ -268,6 +297,12 @@ const server = http.createServer(async (req, res) => {
 
   if (!isAuthorized(req)) {
     sendText(res, 401, 'unauthorized');
+    return;
+  }
+
+  const method = pathname.slice(5);
+  if (BLOCKED_METHODS.has(method)) {
+    sendText(res, 403, 'forbidden');
     return;
   }
 
