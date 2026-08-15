@@ -23,7 +23,7 @@ flutter pub get
 flutter run
 ```
 
-真机调试时，手机和 Mac 需要能访问到桥接服务地址（例如 `http://192.168.1.100:8787`）。
+真机调试时，手机和 Mac 需要能访问到桥接服务地址（例如 `http://<your-mac-ip>:8787`）。
 
 ## 打包 Android APK
 

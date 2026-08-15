@@ -24,7 +24,7 @@ Future<void> main() async {
   final sessions = await api.listSessions();
   stdout.writeln('session.list OK: ${sessions.length} sessions');
 
-  final created = await api.createSession(cwd: '.');
+  final created = await api.createSession(cwd: '/path/to/workspace');
   final sessionId = created['sessionId'] as String;
   stdout.writeln('session.create OK: $sessionId');
 

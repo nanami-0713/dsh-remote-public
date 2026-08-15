@@ -105,7 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
             controller: _serverController,
             decoration: const InputDecoration(
               labelText: '桥接服务地址',
-              hintText: 'http://192.168.1.100:8787',
+              hintText: 'http://<your-mac-ip>:8787',
               border: OutlineInputBorder(),
             ),
           ),
