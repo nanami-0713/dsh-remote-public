@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter_zxing/flutter_zxing.dart';
 
 import '../main.dart';
 import '../services/pairing.dart';
@@ -14,20 +14,11 @@ class ScanPairPage extends StatefulWidget {
 }
 
 class _ScanPairPageState extends State<ScanPairPage> {
-  final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-  );
   final PairingService _pairing = PairingService();
 
   bool _busy = false;
   String _status = '将电脑上生成的配对二维码放入取景框';
   bool _failed = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 
   Future<void> _handleRaw(String raw) async {
     if (_busy) return;
@@ -92,34 +83,24 @@ class _ScanPairPageState extends State<ScanPairPage> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                MobileScanner(
-                  controller: _controller,
-                  onDetect: (capture) {
-                    for (final barcode in capture.barcodes) {
-                      final raw = barcode.rawValue;
-                      if (raw != null && raw.isNotEmpty) {
-                        _handleRaw(raw);
-                        break;
-                      }
+                ReaderWidget(
+                  onScan: (code) {
+                    final raw = code.text?.trim() ?? '';
+                    if (raw.isNotEmpty) _handleRaw(raw);
+                  },
+                  onScanFailure: (error) {
+                    if (mounted && !_busy && !_failed) {
+                      setState(() {
+                        _failed = true;
+                        _status = '扫码失败，请保持二维码在框内并保持稳定';
+                      });
                     }
                   },
-                  errorBuilder: (context, error) {
-                    return Center(
-                      child: Container(
-                        margin: const EdgeInsets.all(24),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '无法打开相机，请检查相机权限后重试。\n$error',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.black87),
-                        ),
-                      ),
-                    );
-                  },
+                  resolution: ResolutionPreset.high,
+                  lensDirection: CameraLensDirection.back,
+                  scanDelay: const Duration(milliseconds: 700),
+                  tryInverted: true,
+                  tryDownscale: true,
                 ),
                 Center(
                   child: Container(
