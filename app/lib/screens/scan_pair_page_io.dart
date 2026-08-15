@@ -92,7 +92,7 @@ class _ScanPairPageState extends State<ScanPairPage> {
                     if (mounted && !_busy && !_failed) {
                       setState(() {
                         _failed = true;
-                        _status = '扫码失败，请保持二维码在框内并保持稳定';
+                        _status = '扫码失败：$error';
                       });
                     }
                   },
