@@ -9,6 +9,23 @@
 DSH 默认只监听 `127.0.0.1:3080`，并且官方禁止直接 `--host 0.0.0.0`。  
 本项目通过一个带 Token 鉴权的本地桥接服务，让手机 App 在局域网或公网（Tailscale / Cloudflare Tunnel / ngrok / frp）安全地远程给 DSH 发送指令，并实时查看执行过程。
 
+## 与 Agents Anywhere 的区别
+
+[Agents Anywhere](https://github.com/anywhere-labs/Agents-Anywhere) 是一个多 Agent 远程控制平台，目标是统一控制 Codex、Claude Code 等编程 Agent，并提供文件浏览、远程终端、多设备配对等能力。
+
+本项目定位不同：
+
+| 维度 | DSH-Remote | Agents Anywhere |
+|---|---|---|
+| 控制对象 | 只控制 DeepSeek Harness (DSH) | Codex、Claude Code 等多个 Agent |
+| 定位 | DSH 专用轻量手机遥控器 | 多 Agent、多设备通用控制平台 |
+| 架构 | 本地 Node bridge + Flutter App | FastAPI 后端 + Connector + Web/Android |
+| 文件/终端 | 暂不支持 | 支持远程文件、shell、终端 |
+| 多设备 | 只针对本机 | 支持多台设备接入 |
+| 适合场景 | 个人远程控制自己的 DSH | 多 Agent、团队/自托管场景 |
+
+简单说：**DSH-Remote 是为 DSH 量身定做的专用遥控器；Agents Anywhere 是面向多种 Agent 的通用平台。**
+
 ## 架构
 
 ```text
