@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../main.dart';
 import '../services/credential_store.dart';
+import '../services/deep_link.dart';
 import '../services/dsh_api.dart';
 import '../services/pairing.dart';
 import 'chat_screen.dart';
@@ -39,7 +40,26 @@ class _HomeScreenState extends State<HomeScreen> {
       _pairFromLaunchCode(launchCode);
       return;
     }
+    // Native app is the primary path: a dshremote:// QR can open the app
+    // directly (cold start via initial link, warm start via the channel).
+    DeepLinkService.listen(_pairFromRawLink);
+    _initializeFromDeepLink();
+  }
+
+  Future<void> _initializeFromDeepLink() async {
+    final link = await DeepLinkService.initialLink();
+    if (!mounted) return;
+    if (link != null && link.isNotEmpty && PairingInvite.tryParse(link) != null) {
+      _pairFromRawLink(link);
+      return;
+    }
     _restoreSavedConnection();
+  }
+
+  Future<void> _pairFromRawLink(String raw) async {
+    final invite = PairingInvite.tryParse(raw);
+    if (invite == null) return;
+    await _pairWithInvite(invite, deviceName: '手机');
   }
 
   Future<void> _pairFromLaunchCode(String code) async {
@@ -50,12 +70,19 @@ class _HomeScreenState extends State<HomeScreen> {
       code: code,
       version: 1,
     );
+    await _pairWithInvite(invite, deviceName: '手机浏览器');
+  }
+
+  Future<void> _pairWithInvite(
+    PairingInvite invite, {
+    required String deviceName,
+  }) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final result = await PairingService().pair(invite, deviceName: '手机浏览器');
+      final result = await PairingService().pair(invite, deviceName: deviceName);
       if (!mounted) return;
       setState(() {
         _serverController.text = result.baseUrl;

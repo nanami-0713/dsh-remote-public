@@ -273,9 +273,7 @@ export function createPairing({ config, configDir }) {
         sendText(res, 400, 'bad request');
         return true;
       }
-      const payload = new URL('/app/', base);
-      payload.searchParams.set('code', code);
-      const target = payload.toString();
+      const target = `dshremote://pair?base=${encodeURIComponent(base)}&code=${encodeURIComponent(code)}&v=1`;
       try {
         const svg = await QRCode.toString(target, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
         res.writeHead(200, {
@@ -557,9 +555,11 @@ th { color:var(--muted); font-weight:500; font-size:13px; }
       <div id="qrEmpty" class="empty">点击「生成配对二维码」开始</div>
       <div class="row">
         <button class="primary" id="startPair">生成配对二维码</button>
-        <button class="ghost" id="copyUrl">复制配对链接</button>
+        <button class="ghost" id="copyUrl">复制 App 配对链接</button>
+        <button class="ghost" id="copyWebUrl">复制网页版链接</button>
       </div>
       <div id="pairUrl"></div>
+      <div id="webUrl"></div>
       <div class="countdown" id="countdown"></div>
     </div>
   </div>
@@ -588,6 +588,10 @@ async function api(path, options = {}) {
 }
 
 function pairPayload(base, code) {
+  return 'dshremote://pair?base=' + encodeURIComponent(base) + '&code=' + encodeURIComponent(code) + '&v=1';
+}
+
+function webPayload(base, code) {
   const u = new URL('/app/', base);
   u.searchParams.set('code', code);
   return u.toString();
@@ -618,18 +622,20 @@ function renderQr() {
   const empty = document.getElementById('qrEmpty');
   const countdown = document.getElementById('countdown');
   const pairUrl = document.getElementById('pairUrl');
+  const webUrl = document.getElementById('webUrl');
   if (!state.code || !state.selectedBase) {
     img.style.display = 'none';
     empty.style.display = 'block';
     countdown.textContent = '';
     pairUrl.textContent = '';
+    webUrl.textContent = '';
     return;
   }
-  const payload = pairPayload(state.selectedBase, state.code);
   img.src = '/pair/qr.svg?code=' + encodeURIComponent(state.code) + '&base=' + encodeURIComponent(state.selectedBase);
   img.style.display = 'block';
   empty.style.display = 'none';
-  pairUrl.textContent = payload;
+  pairUrl.textContent = pairPayload(state.selectedBase, state.code);
+  webUrl.textContent = '网页版（未装 App 时用）：' + webPayload(state.selectedBase, state.code);
 }
 
 function tick() {
@@ -711,6 +717,14 @@ document.getElementById('copyUrl').addEventListener('click', async () => {
   if (!text) return;
   try { await navigator.clipboard.writeText(text); } catch (e) {
     window.prompt('复制配对链接:', text);
+  }
+});
+document.getElementById('copyWebUrl').addEventListener('click', async () => {
+  const raw = document.getElementById('webUrl').textContent;
+  const text = raw.replace(/^网页版（未装 App 时用）：/, '');
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); } catch (e) {
+    window.prompt('复制网页版链接:', text);
   }
 });
 document.getElementById('baseSelect').addEventListener('change', (e) => {

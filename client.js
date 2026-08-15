@@ -96,9 +96,11 @@ window.__ModuleLoader__.load({
 				'        <div id="dsh-remote-qr-empty" class="dsh-remote-muted">\u70B9\u51FB\u300C\u751F\u6210\u914D\u5BF9\u4E8C\u7EF4\u7801\u300D\u5F00\u59CB</div>',
 				'        <div class="dsh-remote-row">',
 				'          <button id="dsh-remote-start" class="primary">\u751F\u6210\u914D\u5BF9\u4E8C\u7EF4\u7801</button>',
-				'          <button id="dsh-remote-copy">\u590D\u5236\u914D\u5BF9\u94FE\u63A5</button>',
+				'          <button id="dsh-remote-copy">\u590D\u5236 App \u914D\u5BF9\u94FE\u63A5</button>',
+				'          <button id="dsh-remote-copy-web">\u590D\u5236\u7F51\u9875\u7248\u94FE\u63A5</button>',
 				'        </div>',
 				'        <div id="dsh-remote-url" class="url"></div>',
+				'        <div id="dsh-remote-web-url" class="url"></div>',
 				'        <div id="dsh-remote-countdown" class="dsh-remote-muted"></div>',
 				'      </div>',
 				'    </div>',
@@ -127,6 +129,7 @@ window.__ModuleLoader__.load({
 			document.getElementById('dsh-remote-refresh').addEventListener('click', refresh);
 			document.getElementById('dsh-remote-start').addEventListener('click', startPair);
 			document.getElementById('dsh-remote-copy').addEventListener('click', copyPairUrl);
+			document.getElementById('dsh-remote-copy-web').addEventListener('click', copyWebUrl);
 			document.getElementById('dsh-remote-base').addEventListener('change', function (event) {
 				state.base = event.target.value;
 				renderQr();
@@ -148,6 +151,10 @@ window.__ModuleLoader__.load({
 		var els = {};
 
 		function pairPayload(base, code) {
+			return 'dshremote://pair?base=' + encodeURIComponent(base) + '&code=' + encodeURIComponent(code) + '&v=1';
+		}
+
+		function webPayload(base, code) {
 			var u = new URL('/app/', base);
 			u.searchParams.set('code', code);
 			return u.toString();
@@ -207,6 +214,7 @@ window.__ModuleLoader__.load({
 				els.qr.style.display = 'none';
 				els.qrEmpty.style.display = 'block';
 				els.url.textContent = '';
+				els.webUrl.textContent = '';
 				els.countdown.textContent = '';
 				return;
 			}
@@ -214,6 +222,7 @@ window.__ModuleLoader__.load({
 			els.qr.style.display = 'block';
 			els.qrEmpty.style.display = 'none';
 			els.url.textContent = pairPayload(state.base, state.code);
+			els.webUrl.textContent = '\u7F51\u9875\u7248\uFF08\u672A\u88C5 App \u65F6\u7528\uFF09\uFF1A' + webPayload(state.base, state.code);
 		}
 
 		function tick() {
@@ -302,6 +311,16 @@ window.__ModuleLoader__.load({
 			}
 		}
 
+		async function copyWebUrl() {
+			var text = (els.webUrl.textContent || '').replace(/^\u7F51\u9875\u7248\uFF08\u672A\u88C5 App \u65F6\u7528\uFF09\uFF1A/, '');
+			if (!text) return;
+			try {
+				await navigator.clipboard.writeText(text);
+			} catch (_) {
+				window.prompt('\u590D\u5236\u7F51\u9875\u7248\u94FE\u63A5:', text);
+			}
+		}
+
 		function apply(ctx) {
 			var cleanup = null;
 			var intervals = [];
@@ -318,6 +337,7 @@ window.__ModuleLoader__.load({
 					qr: document.getElementById('dsh-remote-qr'),
 					qrEmpty: document.getElementById('dsh-remote-qr-empty'),
 					url: document.getElementById('dsh-remote-url'),
+					webUrl: document.getElementById('dsh-remote-web-url'),
 					countdown: document.getElementById('dsh-remote-countdown'),
 					pending: document.getElementById('dsh-remote-pending'),
 					devices: document.getElementById('dsh-remote-devices')
