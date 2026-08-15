@@ -3,7 +3,7 @@
   "port": 8787,
   "dshBaseUrl": "http://127.0.0.1:3080",
   "token": "CHANGE_ME_TO_A_LONG_RANDOM_TOKEN",
-  "allowedIps": [],
+  "allowedIps": ["127.0.0.1", "100.64.0.0/10"],
   "trustProxy": false,
   "rateLimit": {
     "windowMs": 60000,
