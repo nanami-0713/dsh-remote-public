@@ -1,0 +1,5 @@
+# dsh-remote bundle: manages the authenticated bridge process (127.0.0.1:8787)
+# and serves the pairing/device UI into the DSH web shell.
+- insert:
+    - id: dsh-remote
+      name: 'dsh-remote'

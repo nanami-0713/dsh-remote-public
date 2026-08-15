@@ -12,6 +12,8 @@ dependencies:
   http: ^1.2.0
   web_socket_channel: ^2.4.0
   cupertino_icons: ^1.0.6
+  mobile_scanner: 7.0.0
+  flutter_secure_storage: ^9.2.4
 
 dev_dependencies:
   flutter_test:

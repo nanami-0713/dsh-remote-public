@@ -9,6 +9,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "ws": "^8.18.0"
   }
 }

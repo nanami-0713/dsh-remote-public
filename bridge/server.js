@@ -1,8 +1,10 @@
 import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve, dirname, normalize, sep, extname } from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
+import { createPairing } from './lib/pairing.js';
 
 const DEFAULTS = {
   host: '0.0.0.0',
@@ -15,35 +17,26 @@ const DEFAULTS = {
     windowMs: 60000,
     max: 120,
   },
+  // Pairing: one-time code, desktop confirmation, per-device tokens.
+  pairTtlMs: 180000,
+  pairPendingTtlMs: 600000,
+  pairRequireApproval: true,
+  devicesFile: '',
+  webRoot: '',
 };
 
 /**
- * Methods that are too dangerous to expose through the phone bridge.
- * The bridge already runs on the same host as DSH, so DSH's loopback-only
- * privileged-method protection does not apply to bridge callers.
+ * Only the methods the phone app actually needs. Everything else, including
+ * credentials/settings/host-filesystem methods, is denied by default so new
+ * DSH methods can never be exposed by accident.
  */
-const BLOCKED_METHODS = new Set([
-  // Credentials / settings / secrets
-  'credentials.describe',
-  'credentials.set',
-  'credentials.unset',
-  'settings.describe',
-  'settings.openDocument',
-  'settings.update',
-  'settings.replace',
-  'settings.mutate',
-  // Host file system / native dialogs
-  'host.pickDirectory',
-  'host.listDirectory',
-  'host.createDirectory',
-  'host.openPath',
-  // Agent presets that can read/delete local files or config
-  'agentPreset.read',
-  'agentPreset.copy',
-  'agentPreset.openDocument',
-  'agentPreset.remove',
-  // Model discovery can probe arbitrary URLs / carry credentials
-  'llm.discoverModels',
+const ALLOWED_METHODS = new Set([
+  'session.list',
+  'session.create',
+  'session.prompt',
+  'session.cancel',
+  'session.history',
+  'respond',
 ]);
 
 function loadConfig() {
@@ -66,6 +59,11 @@ function loadConfig() {
     dshBaseUrl: process.env.DSH_BASE_URL || fileConfig.dshBaseUrl || DEFAULTS.dshBaseUrl,
     allowedIps: fileConfig.allowedIps ?? DEFAULTS.allowedIps,
     trustProxy: fileConfig.trustProxy ?? DEFAULTS.trustProxy,
+    pairTtlMs: Number(fileConfig.pairTtlMs || DEFAULTS.pairTtlMs),
+    pairPendingTtlMs: Number(fileConfig.pairPendingTtlMs || DEFAULTS.pairPendingTtlMs),
+    pairRequireApproval: fileConfig.pairRequireApproval ?? DEFAULTS.pairRequireApproval,
+    devicesFile: process.env.BRIDGE_DEVICES_FILE || fileConfig.devicesFile || DEFAULTS.devicesFile,
+    webRoot: process.env.BRIDGE_WEB_ROOT || fileConfig.webRoot || DEFAULTS.webRoot,
     rateLimit: {
       ...DEFAULTS.rateLimit,
       ...(fileConfig.rateLimit ?? {}),
@@ -79,7 +77,27 @@ function loadConfig() {
   return config;
 }
 
+const configPath = process.env.BRIDGE_CONFIG || resolve(process.cwd(), 'config.json');
 const config = loadConfig();
+const pairing = createPairing({ config, configDir: dirname(configPath) });
+
+function resolveWebRoot() {
+  const configDir = dirname(configPath);
+  const candidates = [];
+  if (config.webRoot) candidates.push(resolve(configDir, config.webRoot));
+  candidates.push(
+    resolve(configDir, 'webapp'),
+    resolve(configDir, '../app/build/web'),
+    resolve(process.cwd(), 'webapp'),
+    resolve(process.cwd(), '../app/build/web'),
+  );
+  for (const candidate of candidates) {
+    if (existsSync(resolve(candidate, 'index.html'))) return candidate;
+  }
+  return '';
+}
+
+const webRoot = resolveWebRoot();
 
 function safeEqual(a, b) {
   const ba = Buffer.from(String(a));
@@ -96,9 +114,13 @@ function authTokenFromRequest(req) {
   return q || '';
 }
 
-function isAuthorized(req) {
+function authInfoFromRequest(req) {
   const token = authTokenFromRequest(req);
-  return token.length > 0 && safeEqual(token, config.token);
+  if (token.length === 0) return { ok: false };
+  if (safeEqual(token, config.token)) return { ok: true, kind: 'master' };
+  const device = pairing.verifyDeviceToken(token);
+  if (device) return { ok: true, kind: 'device', device };
+  return { ok: false };
 }
 
 function normalizeIp(ip) {
@@ -175,10 +197,26 @@ function checkRateLimit(ip) {
   return true;
 }
 
+const claimBuckets = new Map();
+
+function checkClaimRateLimit(ip) {
+  const now = Date.now();
+  const bucket = claimBuckets.get(ip);
+  if (!bucket || bucket.resetAt <= now) {
+    claimBuckets.set(ip, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  bucket.count += 1;
+  return bucket.count <= 20;
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [ip, bucket] of rateBuckets) {
     if (bucket.resetAt <= now) rateBuckets.delete(ip);
+  }
+  for (const [ip, bucket] of claimBuckets) {
+    if (bucket.resetAt <= now) claimBuckets.delete(ip);
   }
 }, Math.max(config.rateLimit.windowMs || 60000, 60000)).unref?.();
 
@@ -190,6 +228,7 @@ function sendJson(res, status, obj) {
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-private-network': 'true',
   });
   res.end(body);
 }
@@ -207,6 +246,7 @@ function handleOptions(req, res) {
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-private-network': 'true',
   });
   res.end();
 }
@@ -266,6 +306,61 @@ function isStreamPath(pathname) {
   return pathname === '/api/events.mux' || pathname === '/api/events.host';
 }
 
+const WEB_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm',
+  '.otf': 'font/otf',
+  '.ttf': 'font/ttf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json',
+};
+
+async function serveWebApp(req, res, pathname) {
+  if (!webRoot) {
+    sendText(res, 404, 'web app not built; run: flutter build web --release');
+    return;
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendText(res, 405, 'method not allowed');
+    return;
+  }
+  const rel = pathname === '/app' || pathname === '/app/' ? 'index.html' : pathname.slice('/app/'.length);
+  const filePath = normalize(resolve(webRoot, rel));
+  if (filePath !== webRoot && !filePath.startsWith(webRoot + sep)) {
+    sendText(res, 403, 'forbidden');
+    return;
+  }
+  try {
+    let target = filePath;
+    const info = await stat(target);
+    if (info.isDirectory()) target = resolve(target, 'index.html');
+    const body = await readFile(target);
+    const type = WEB_MIME[extname(target).toLowerCase()] ?? 'application/octet-stream';
+    res.writeHead(200, {
+      'content-type': type,
+      'content-length': body.length,
+      'cache-control': 'no-cache',
+    });
+    if (req.method === 'HEAD') res.end();
+    else res.end(body);
+  } catch (err) {
+    if (err?.code === 'ENOENT') sendText(res, 404, 'not found');
+    else sendText(res, 500, 'static file error');
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     handleOptions(req, res);
@@ -290,19 +385,36 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Mobile web app (Flutter web build) served by the bridge itself.
+  if (pathname === '/app' || pathname.startsWith('/app/')) {
+    await serveWebApp(req, res, pathname);
+    return;
+  }
+
+  // Pairing surface (QR admin page, one-time codes, device management).
+  if (pathname.startsWith('/pair/')) {
+    if (pathname === '/pair/claim' && !checkClaimRateLimit(ip)) {
+      sendText(res, 429, 'too many pairing attempts');
+      return;
+    }
+    if (await pairing.handlePairRoutes(req, res, pathname, ip)) return;
+  }
+
   if (!pathname.startsWith('/api/')) {
     sendJson(res, 404, { error: 'not_found' });
     return;
   }
 
-  if (!isAuthorized(req)) {
+  const auth = authInfoFromRequest(req);
+  if (!auth.ok) {
     sendText(res, 401, 'unauthorized');
     return;
   }
+  if (auth.device) pairing.touchDevice(auth.device);
 
   const method = pathname.slice(5);
-  if (BLOCKED_METHODS.has(method)) {
-    sendText(res, 403, 'forbidden');
+  if (!ALLOWED_METHODS.has(method)) {
+    sendText(res, 403, 'method not allowed on remote bridge');
     return;
   }
 
@@ -379,11 +491,13 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  if (!isAuthorized(req)) {
+  const auth = authInfoFromRequest(req);
+  if (!auth.ok) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
   }
+  if (auth.device) pairing.touchDevice(auth.device);
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     const dshWsUrl = config.dshBaseUrl.replace(/^http/, 'ws') + '/api/events.mux';
@@ -396,5 +510,8 @@ server.listen(config.port, config.host, () => {
   console.log(`[bridge] forwarding to DSH at ${config.dshBaseUrl}`);
   console.log(`[bridge] REST API: http://<host>:${config.port}/api/*`);
   console.log(`[bridge] WebSocket stream: ws://<host>:${config.port}/ws/events.mux?token=<token>`);
+  console.log(`[bridge] pairing page: http://127.0.0.1:${config.port}/pair/qr (desktop only)`);
+  console.log(`[bridge] mobile web app: ${webRoot ? `http://<host>:${config.port}/app/` : 'not built (flutter build web --release)'}`);
+  console.log(`[bridge] API allowlist: ${[...ALLOWED_METHODS].join(', ')}`);
   console.log('[bridge] keep your token secret; never expose DSH 3080 directly.');
 });

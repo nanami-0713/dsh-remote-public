@@ -1,6 +1,8 @@
 # Node
 node_modules/
 bridge/config.json
+bridge/devices.json
+bridge/devices.json.tmp
 
 # Flutter/Dart
 app/.dart_tool/

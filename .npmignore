@@ -1,0 +1,13 @@
+# Never publish local secrets or build artifacts.
+bridge/config.json
+bridge/devices.json
+bridge/devices.json.tmp
+bridge/node_modules/
+app/
+dist/
+docs/
+scripts/
+.git/
+.github/
+README.md
+start_dsh_remote.sh

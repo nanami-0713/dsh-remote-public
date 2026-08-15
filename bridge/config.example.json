@@ -5,6 +5,11 @@
   "token": "CHANGE_ME_TO_A_LONG_RANDOM_TOKEN",
   "allowedIps": ["127.0.0.1", "100.64.0.0/10"],
   "trustProxy": false,
+  "pairTtlMs": 180000,
+  "pairPendingTtlMs": 600000,
+  "pairRequireApproval": true,
+  "devicesFile": "devices.json",
+  "webRoot": "",
   "rateLimit": {
     "windowMs": 60000,
     "max": 120

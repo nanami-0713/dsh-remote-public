@@ -1,8 +1,12 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../services/credential_store.dart';
 import '../services/dsh_api.dart';
+import '../services/pairing.dart';
 import 'chat_screen.dart';
+import 'scan_pair_page.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -12,14 +16,62 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _serverController = TextEditingController(text: 'http://<your-mac-ip>:8787');
+  final _serverController = TextEditingController();
   final _tokenController = TextEditingController();
-  final _cwdController = TextEditingController(text: '/path/to/workspace');
+  final _cwdController = TextEditingController();
+
+  final CredentialStore _store = CredentialStore();
 
   DshApi? _api;
   List<Map<String, dynamic>> _sessions = [];
   bool _loading = false;
   String? _error;
+  String _pairedDeviceName = '';
+
+  @override
+  void initState() {
+    super.initState();
+    // Web fallback: the QR code is a plain URL with ?code=..., so a system
+    // camera scan lands here directly and can pair without typing anything.
+    final scheme = Uri.base.scheme;
+    final launchCode = Uri.base.queryParameters['code']?.trim() ?? '';
+    if ((kIsWeb || scheme == 'http' || scheme == 'https') && launchCode.isNotEmpty) {
+      _pairFromLaunchCode(launchCode);
+      return;
+    }
+    _restoreSavedConnection();
+  }
+
+  Future<void> _pairFromLaunchCode(String code) async {
+    final uri = Uri.base;
+    final authority = uri.hasPort ? '${uri.host}:${uri.port}' : uri.host;
+    final invite = PairingInvite(
+      baseUrl: '${uri.scheme}://$authority',
+      code: code,
+      version: 1,
+    );
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await PairingService().pair(invite, deviceName: '手机浏览器');
+      if (!mounted) return;
+      setState(() {
+        _serverController.text = result.baseUrl;
+        _tokenController.text = result.token;
+        _pairedDeviceName = result.deviceName.isEmpty ? result.deviceId : result.deviceName;
+        _loading = false;
+      });
+      await _connect(saveOnSuccess: true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e is PairingException ? e.message : '配对失败: $e';
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -29,11 +81,22 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  Future<void> _connect() async {
+  Future<void> _restoreSavedConnection() async {
+    final saved = await _store.load();
+    if (saved == null || !mounted) return;
+    setState(() {
+      _serverController.text = saved.server;
+      _tokenController.text = saved.token;
+      _pairedDeviceName = saved.deviceName;
+    });
+    await _connect(saveOnSuccess: false);
+  }
+
+  Future<void> _connect({bool saveOnSuccess = false}) async {
     final server = _serverController.text.trim().replaceAll(RegExp(r'/+$'), '');
     final token = _tokenController.text.trim();
     if (server.isEmpty || token.isEmpty) {
-      setState(() => _error = '请填写服务器地址和 Token');
+      setState(() => _error = '请先扫码绑定，或展开手动配置填写地址和 Token');
       return;
     }
     setState(() {
@@ -44,6 +107,13 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final sessions = await _api!.listSessions();
       if (!mounted) return;
+      if (saveOnSuccess) {
+        await _store.save(
+          server: server,
+          token: token,
+          deviceName: _pairedDeviceName,
+        );
+      }
       setState(() {
         _sessions = sessions;
         _loading = false;
@@ -55,6 +125,33 @@ class _HomeScreenState extends State<HomeScreen> {
         _error = e.toString();
       });
     }
+  }
+
+  Future<void> _scanAndPair() async {
+    final result = await Navigator.of(context).push<PairingResult>(
+      MaterialPageRoute(builder: (_) => const ScanPairPage()),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _serverController.text = result.baseUrl;
+      _tokenController.text = result.token;
+      _pairedDeviceName = result.deviceName.isEmpty ? result.deviceId : result.deviceName;
+      _error = null;
+    });
+    await _connect(saveOnSuccess: true);
+  }
+
+  Future<void> _forgetDevice() async {
+    await _store.clear();
+    if (!mounted) return;
+    setState(() {
+      _api = null;
+      _sessions = [];
+      _serverController.clear();
+      _tokenController.clear();
+      _pairedDeviceName = '';
+      _error = null;
+    });
   }
 
   Future<void> _createSession() async {
@@ -118,9 +215,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: const Color(0xFFEEF2FF),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text(
-                '标准模式',
-                style: TextStyle(fontSize: 11, color: kDshBlue),
+              child: Text(
+                connected ? '已连接' : '待连接',
+                style: const TextStyle(fontSize: 11, color: kDshBlue),
               ),
             ),
           ],
@@ -140,45 +237,30 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    '通过 bridge 远程控制本机 DeepSeek Harness',
-                    style: TextStyle(fontSize: 13, color: kTextSecondary),
+                  Text(
+                    _pairedDeviceName.isEmpty
+                        ? '电脑端打开 http://127.0.0.1:8787/pair/qr，手机扫码即可绑定'
+                        : '已绑定设备：$_pairedDeviceName',
+                    style: const TextStyle(fontSize: 13, color: kTextSecondary),
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _serverController,
-                    decoration: const InputDecoration(
-                      labelText: '桥接服务地址',
-                      hintText: 'http://<your-mac-ip>:8787',
-                      prefixIcon: Icon(Icons.dns_outlined, size: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _loading ? null : _scanAndPair,
+                      icon: _loading
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.qr_code_scanner, size: 18),
+                      label: Text(_pairedDeviceName.isEmpty ? '扫码绑定设备' : '重新扫码绑定'),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _tokenController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Token',
-                      prefixIcon: Icon(Icons.key_outlined, size: 20),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _cwdController,
-                    decoration: const InputDecoration(
-                      labelText: '默认工作目录',
-                      prefixIcon: Icon(Icons.folder_outlined, size: 20),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _loading ? null : _connect,
-                          icon: _loading
-                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Icon(Icons.cloud_sync_outlined, size: 18),
+                        child: OutlinedButton.icon(
+                          onPressed: _loading ? null : () => _connect(saveOnSuccess: true),
+                          icon: const Icon(Icons.cloud_sync_outlined, size: 18),
                           label: Text(connected ? '连接 / 刷新' : '连接'),
                         ),
                       ),
@@ -190,6 +272,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
+                  if (_pairedDeviceName.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _loading ? null : _forgetDevice,
+                        child: const Text('忘记此设备', style: TextStyle(color: kTextSecondary, fontSize: 13)),
+                      ),
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Container(
@@ -207,6 +299,44 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ],
               ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: ExpansionTile(
+              title: const Text('手动配置（高级）', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              subtitle: const Text('不推荐；优先使用扫码绑定', style: TextStyle(fontSize: 12, color: kTextSecondary)),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              expandedCrossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _serverController,
+                  decoration: const InputDecoration(
+                    labelText: '桥接服务地址',
+                    hintText: 'http://100.x.x.x:8787',
+                    prefixIcon: Icon(Icons.dns_outlined, size: 20),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _tokenController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Token',
+                    prefixIcon: Icon(Icons.key_outlined, size: 20),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _cwdController,
+                  decoration: const InputDecoration(
+                    labelText: '默认工作目录（可选）',
+                    hintText: '/path/to/workspace',
+                    prefixIcon: Icon(Icons.folder_outlined, size: 20),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 24),
