@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../services/dsh_api.dart';
 import 'chat_screen.dart';
 
@@ -96,59 +97,150 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final connected = _api != null && !_loading;
     return Scaffold(
-      appBar: AppBar(title: const Text('DSH Remote')),
+      appBar: AppBar(
+        title: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset('assets/dsh_logo.png', width: 28, height: 28),
+            ),
+            const SizedBox(width: 10),
+            const Text(
+              'DSH-Remote',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEF2FF),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: const Text(
+                '标准模式',
+                style: TextStyle(fontSize: 11, color: kDshBlue),
+              ),
+            ),
+          ],
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            controller: _serverController,
-            decoration: const InputDecoration(
-              labelText: '桥接服务地址',
-              hintText: 'http://<your-mac-ip>:8787',
-              border: OutlineInputBorder(),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '连接 DSH',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '通过 bridge 远程控制本机 DeepSeek Harness',
+                    style: TextStyle(fontSize: 13, color: kTextSecondary),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _serverController,
+                    decoration: const InputDecoration(
+                      labelText: '桥接服务地址',
+                      hintText: 'http://<your-mac-ip>:8787',
+                      prefixIcon: Icon(Icons.dns_outlined, size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _tokenController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Token',
+                      prefixIcon: Icon(Icons.key_outlined, size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _cwdController,
+                    decoration: const InputDecoration(
+                      labelText: '默认工作目录',
+                      prefixIcon: Icon(Icons.folder_outlined, size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _loading ? null : _connect,
+                          icon: _loading
+                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                              : const Icon(Icons.cloud_sync_outlined, size: 18),
+                          label: Text(connected ? '连接 / 刷新' : '连接'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        tooltip: '新建会话',
+                        onPressed: _loading ? null : _createSession,
+                        icon: const Icon(Icons.add),
+                      ),
+                    ],
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _tokenController,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Token',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 24),
           Row(
             children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _loading ? null : _connect,
-                  icon: const Icon(Icons.cloud_sync),
-                  label: const Text('连接 / 刷新'),
+              const Text(
+                '会话',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kTextPrimary),
+              ),
+              const Spacer(),
+              if (_sessions.isNotEmpty)
+                Text(
+                  '${_sessions.length}',
+                  style: const TextStyle(fontSize: 13, color: kTextSecondary),
                 ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: '新建会话',
-                onPressed: _loading ? null : _createSession,
-                icon: const Icon(Icons.add_circle),
-              ),
             ],
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-          ],
-          const SizedBox(height: 16),
-          Text('会话列表', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           if (_loading)
-            const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
           else if (_sessions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('暂无会话，点击右上角 + 新建。'),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: kSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: kBorder),
+              ),
+              child: const Center(
+                child: Text(
+                  '暂无会话，先连接后新建',
+                  style: TextStyle(color: kTextSecondary),
+                ),
+              ),
             )
           else
             ..._sessions.map((s) {
@@ -159,12 +251,23 @@ class _HomeScreenState extends State<HomeScreen> {
               final title = values?['title'] as String? ?? '未命名会话';
               final cwd = s['cwd'] as String? ?? '';
               return Card(
+                margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   leading: running
                       ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.chat_bubble_outline),
+                      : Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF2FF),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.chat_bubble_outline, color: kDshBlue, size: 20),
+                        ),
                   title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text('$cwd\n$id', maxLines: 2, overflow: TextOverflow.ellipsis),
+                  trailing: const Icon(Icons.chevron_right, color: kTextSecondary),
                   onTap: () => _openChat(id, title),
                 ),
               );

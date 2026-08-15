@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../services/dsh_api.dart';
 import '../services/dsh_stream.dart';
 
@@ -351,7 +352,18 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.asset('assets/dsh_logo.png', width: 22, height: 22),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: '取消当前任务',
@@ -365,18 +377,23 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
               itemCount: _lines.length,
               itemBuilder: (context, index) {
                 final line = _lines[index];
-                return _LogTile(line: line);
+                return MessageBubble(kind: line.kind, text: line.text);
               },
             ),
           ),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              decoration: const BoxDecoration(
+                color: kSurface,
+                border: Border(top: BorderSide(color: kBorder)),
+              ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
                     child: TextField(
@@ -384,9 +401,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       minLines: 1,
                       maxLines: 4,
                       decoration: const InputDecoration(
-                        hintText: '输入要发送给 DSH 的指令…',
-                        border: OutlineInputBorder(),
-                        isDense: true,
+                        hintText: '描述你想要让 DSH 做的事…',
+                        prefixIcon: Padding(
+                          padding: EdgeInsets.only(bottom: 2),
+                          child: Icon(Icons.edit_outlined, size: 20),
+                        ),
                       ),
                       onSubmitted: (_) => _send(),
                     ),
@@ -394,7 +413,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(width: 8),
                   IconButton.filled(
                     onPressed: _sending ? null : _send,
-                    icon: const Icon(Icons.send),
+                    icon: _sending
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.arrow_upward),
                   ),
                 ],
               ),
@@ -457,41 +478,111 @@ class _QuestionBlock extends StatelessWidget {
   }
 }
 
-class _LogTile extends StatelessWidget {
-  final _LogLine line;
+class MessageBubble extends StatelessWidget {
+  final String kind;
+  final String text;
 
-  const _LogTile({required this.line});
+  const MessageBubble({super.key, required this.kind, required this.text});
 
   @override
   Widget build(BuildContext context) {
-    final (background, foreground, icon) = switch (line.kind) {
-      'user' => (Colors.blue.shade50, Colors.black87, Icons.person),
-      'assistant' => (Colors.green.shade50, Colors.black87, Icons.smart_toy_outlined),
-      'tool' => (Colors.orange.shade50, Colors.black87, Icons.build_outlined),
-      'error' => (Colors.red.shade50, Colors.red.shade900, Icons.error_outline),
-      'system' => (Colors.grey.shade100, Colors.black54, Icons.info_outline),
-      _ => (Colors.grey.shade50, Colors.black54, Icons.chevron_right),
-    };
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 16, color: foreground),
-          const SizedBox(width: 8),
-          Expanded(
+    switch (kind) {
+      case 'user':
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10, left: 48),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: const BoxDecoration(
+              color: kDshBlue,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomLeft: Radius.circular(16),
+                bottomRight: Radius.circular(4),
+              ),
+            ),
             child: SelectableText(
-              line.text,
-              style: TextStyle(color: foreground, fontSize: 14),
+              text,
+              style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.4),
             ),
           ),
-        ],
-      ),
-    );
+        );
+      case 'assistant':
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset('assets/dsh_logo.png', width: 28, height: 28),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: kSurface,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(4),
+                      topRight: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
+                      bottomRight: Radius.circular(16),
+                    ),
+                    border: Border.all(color: kBorder),
+                  ),
+                  child: SelectableText(
+                    text,
+                    style: const TextStyle(color: kTextPrimary, fontSize: 14, height: 1.4),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      case 'tool':
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F4F6),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: kBorder),
+          ),
+          child: SelectableText(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              color: kTextSecondary,
+              fontFamily: 'monospace',
+              height: 1.4,
+            ),
+          ),
+        );
+      case 'error':
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Center(
+            child: Text(
+              text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13),
+            ),
+          ),
+        );
+      default:
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Center(
+            child: Text(
+              text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: kTextSecondary, fontSize: 12),
+            ),
+          ),
+        );
+    }
   }
 }
