@@ -1,7 +1,7 @@
 {
   "name": "dsh-remote",
-  "version": "0.3.0",
-  "description": "DSH plugin that brings the dsh-remote bridge and QR device pairing into the DSH web UI. Scan a one-time QR code from the phone app, approve on the desktop, and control DSH with a per-device token.",
+  "version": "0.4.0",
+  "description": "DSH plugin that brings the dsh-remote bridge and QR device pairing into the DSH web UI, exposed as a native \"手机遥控\" section inside Settings.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -33,7 +33,9 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [],
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
       "platform": "web"
     }
   }

@@ -10,7 +10,7 @@
 DSH 默认只监听 `127.0.0.1:3080`，并且官方禁止直接 `--host 0.0.0.0`。  
 本项目提供两层能力：
 
-1. **dsh-remote 插件**：一条命令装进 DSH，DSH 页面右下角出现「手机遥控」按钮，点开即生成配对二维码、桌面确认、设备列表和吊销管理。
+1. **dsh-remote 插件**：一条命令装进 DSH，DSH 左下角「设置」弹窗中新增「手机遥控」页，点开即生成配对二维码、桌面确认、设备列表和吊销管理。
 2. **带鉴权的 bridge**：插件自动托管（或独立运行）的桥接服务，默认拒绝式 API 白名单 + 每台手机独立设备 token。
 
 手机侧不用再手填地址和 Token：**扫码 → 电脑点允许 → 完成**。默认二维码是 `dshremote://` 链接，以 App 为第一入口；未装 App 时可复制网页版链接兜底。
@@ -19,7 +19,7 @@ DSH 默认只监听 `127.0.0.1:3080`，并且官方禁止直接 `--host 0.0.0.0`
 
 ```text
 DSH Web 页面
-  └─ dsh-remote 插件「手机遥控」按钮（二维码 / 桌面确认 / 设备吊销）
+  └─ dsh-remote 插件「设置 → 手机遥控」页（二维码 / 桌面确认 / 设备吊销）
        ↓ loopback
 bridge (0.0.0.0:8787)
   ├─ 手机 Flutter App  ── 设备专属 Token ──→ /api/*（默认拒绝 + 白名单）
@@ -82,7 +82,7 @@ npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-remote
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add /path/to/dsh-remote-public
 ```
 
-重启 `dsh web` 并硬刷新，DSH 页面右下角出现「📱 手机遥控」按钮。插件会自动托管 bridge（检测到已有健康 bridge 就复用）。
+重启 `dsh web` 并硬刷新，打开左下角「设置」即可看到「手机遥控」页。插件会自动托管 bridge（检测到已有健康 bridge 就复用）。
 
 ### 方式 A-2：Windows 一键启动（插件已装时可用）
 
