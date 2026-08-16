@@ -31,6 +31,16 @@ DSH (127.0.0.1:3080，只监听 loopback，绝不外露)
 
 手机扫码后：配对码 → 桌面确认 → 签发该设备专属 token → 自动连接。二维码只含 3 分钟有效的一次性配对码，永不含永久 token。
 
+## 平台支持
+
+| 组件 | macOS | Windows | 说明 |
+| --- | --- | --- | --- |
+| dsh-remote 插件（index.js） | ✓ | ✓ | Node.js，平台无关 |
+| bridge（bridge/server.js） | ✓ | ✓ | Node.js，平台无关 |
+| Web 客户端（设置中的「手机遥控」页） | ✓ | ✓ | 浏览器平台无关 |
+| Flutter App | ✓（构建 iOS/Android） | ✓（构建 Android） | 开发机均可 |
+| 一键启动 | `start_dsh_remote.sh` | `start_dsh_remote.ps1` | 插件本身也会自动托管 bridge |
+
 ## 与 Agents Anywhere 的区别
 
 [Agents Anywhere](https://github.com/anywhere-labs/Agents-Anywhere) 是一个多 Agent 远程控制平台，目标是统一控制 Codex、Claude Code 等编程 Agent，并提供文件浏览、远程终端、多设备配对等能力。
@@ -74,7 +84,18 @@ npx -y --package @deepseek-ai/dsh dsh plugin --profile web add /path/to/dsh-remo
 
 重启 `dsh web` 并硬刷新，DSH 页面右下角出现「📱 手机遥控」按钮。插件会自动托管 bridge（检测到已有健康 bridge 就复用）。
 
+### 方式 A-2：Windows 一键启动（插件已装时可用）
+
+在 PowerShell 中执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_dsh_remote.ps1
+```
+
+脚本会检查并启动 DSH 与 bridge、验证健康状态、显示 Tailscale / 局域网地址并打开配对页。首次启动时如 Windows 防火墙弹出授权，请允许专用网络访问。
+
 ### 方式 B：独立 bridge
+
 
 ```bash
 cd bridge
