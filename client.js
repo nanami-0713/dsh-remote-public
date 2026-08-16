@@ -67,7 +67,8 @@ window.__ModuleLoader__.load({
       bases: [],
       pending: [],
       devices: [],
-      requireApproval: true
+      requireApproval: true,
+      bridgeName: ''
     };
 
     var els = {};
@@ -98,7 +99,9 @@ window.__ModuleLoader__.load({
         state.pending = data.pending || [];
         state.devices = data.devices || [];
         state.requireApproval = data.requireApproval !== false;
+        state.bridgeName = data.bridgeName || '';
         els.status.innerHTML = '<span class="dot"></span>bridge \u6B63\u5E38';
+        els.pc.textContent = '\u7535\u8111: ' + (state.bridgeName || '\u672A\u77E5');
         els.mode.textContent = '\u684C\u9762\u786E\u8BA4: ' + (state.requireApproval ? '\u5F00\u542F' : '\u5173\u95ED');
         renderBases();
         renderPending();
@@ -248,6 +251,7 @@ window.__ModuleLoader__.load({
       '  <div class="dsh-remote-card">',
       '    <div class="dsh-remote-row">',
       '      <span id="dsh-remote-status"><span class="dot off"></span>bridge \u68C0\u6D4B\u4E2D\u2026</span>',
+      '      <span id="dsh-remote-pc" class="dsh-remote-muted"></span>',
       '      <span id="dsh-remote-mode" class="dsh-remote-muted"></span>',
       '      <span style="flex:1"></span>',
       '      <button id="dsh-remote-open-page">\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u914D\u5BF9\u9875</button>',
@@ -288,6 +292,7 @@ window.__ModuleLoader__.load({
       host.innerHTML = SECTION_MARKUP;
       els = {
         status: host.querySelector('#dsh-remote-status'),
+        pc: host.querySelector('#dsh-remote-pc'),
         mode: host.querySelector('#dsh-remote-mode'),
         base: host.querySelector('#dsh-remote-base'),
         qr: host.querySelector('#dsh-remote-qr'),

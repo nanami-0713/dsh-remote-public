@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve, dirname, normalize, sep, extname } from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createPairing } from './lib/pairing.js';
 
@@ -23,6 +24,7 @@ const DEFAULTS = {
   pairRequireApproval: true,
   devicesFile: '',
   webRoot: '',
+  bridgeName: '',
 };
 
 /**
@@ -64,6 +66,7 @@ function loadConfig() {
     pairRequireApproval: fileConfig.pairRequireApproval ?? DEFAULTS.pairRequireApproval,
     devicesFile: process.env.BRIDGE_DEVICES_FILE || fileConfig.devicesFile || DEFAULTS.devicesFile,
     webRoot: process.env.BRIDGE_WEB_ROOT || fileConfig.webRoot || DEFAULTS.webRoot,
+    bridgeName: process.env.BRIDGE_NAME || fileConfig.bridgeName || DEFAULTS.bridgeName || os.hostname(),
     rateLimit: {
       ...DEFAULTS.rateLimit,
       ...(fileConfig.rateLimit ?? {}),
@@ -379,7 +382,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Health endpoint for checking the bridge is alive.
+  // Health endpoint for checking the bridge is alive. Intentionally minimal:
+  // machine identity (bridgeName) is only shared inside the authenticated
+  // pairing flow / loopback admin surface, never on the public health probe.
   if (pathname === '/health' || pathname === '/') {
     sendJson(res, 200, { ok: true, service: 'dsh-remote-bridge' });
     return;

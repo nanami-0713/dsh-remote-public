@@ -9,6 +9,7 @@
   "pairPendingTtlMs": 600000,
   "pairRequireApproval": true,
   "devicesFile": "devices.json",
+  "bridgeName": "My-Mac",
   "webRoot": "",
   "rateLimit": {
     "windowMs": 60000,

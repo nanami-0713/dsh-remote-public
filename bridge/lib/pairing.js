@@ -186,6 +186,7 @@ export function createPairing({ config, configDir }) {
     return {
       requireApproval,
       pairTtlMs: codeTtlMs,
+      bridgeName: config.bridgeName || os.hostname(),
       bases: detectReachableBases(config.port),
       pending: [...pending.values()]
         .filter((entry) => entry.status === 'pending')
@@ -430,7 +431,13 @@ export function createPairing({ config, configDir }) {
         entry.tokenHash = hashToken(issued.token);
         entry.deviceId = issued.device.id;
         entry.expiresAt = now() + 60_000;
-        sendJson(res, 200, { ok: true, status: 'approved', token: issued.token, device: issued.device });
+        sendJson(res, 200, {
+          ok: true,
+          status: 'approved',
+          token: issued.token,
+          device: issued.device,
+          bridgeName: config.bridgeName || os.hostname(),
+        });
         return true;
       }
       sendJson(res, 200, {
@@ -438,6 +445,7 @@ export function createPairing({ config, configDir }) {
         status: 'pending',
         pairId: entry.id,
         expiresAt: entry.expiresAt,
+        bridgeName: config.bridgeName || os.hostname(),
         message: 'waiting for desktop approval',
       });
       return true;
@@ -471,6 +479,7 @@ export function createPairing({ config, configDir }) {
           status: 'approved',
           token: entry.token ?? null,
           device: device ? publicDevice(device) : null,
+          bridgeName: config.bridgeName || os.hostname(),
         });
         // Return the token exactly once, then drop it from memory.
         if (entry.token) entry.token = null;
@@ -540,6 +549,7 @@ th { color:var(--muted); font-weight:500; font-size:13px; }
   <div class="card">
     <div class="status">
       <span class="dot" id="bridgeDot"></span><span id="bridgeStatus">bridge 连接中…</span>
+      <span class="badge" id="pcBadge">电脑: —</span>
       <span class="badge" id="modeBadge">桌面确认: —</span>
     </div>
   </div>
@@ -576,7 +586,7 @@ th { color:var(--muted); font-weight:500; font-size:13px; }
 </div>
 
 <script>
-const state = { code:null, expiresAt:0, bases:[], selectedBase:'', pending:[], devices:[], requireApproval:true, timer:null };
+const state = { code:null, expiresAt:0, bases:[], selectedBase:'', pending:[], devices:[], requireApproval:true, bridgeName:'', timer:null };
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -675,8 +685,10 @@ async function refreshState() {
     state.pending = s.pending || [];
     state.devices = s.devices || [];
     state.requireApproval = s.requireApproval !== false;
+    state.bridgeName = s.bridgeName || '';
     document.getElementById('bridgeDot').className = 'dot';
     document.getElementById('bridgeStatus').textContent = 'bridge 正常';
+    document.getElementById('pcBadge').textContent = '电脑: ' + (state.bridgeName || '未知');
     document.getElementById('modeBadge').textContent = '桌面确认: ' + (state.requireApproval ? '开启' : '关闭');
     renderBases();
     renderPending();

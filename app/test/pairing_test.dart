@@ -4,19 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('parses dshremote:// app QR payload', () {
     const raw =
-        'dshremote://pair?base=http%3A%2F%2F<your-mac-tailscale-ip>%3A8787&code=abcdefghijklmnopqrstuvwxyz123456&v=1';
+        'dshremote://pair?base=http%3A%2F%2F198.51.100.10%3A8787&code=abcdefghijklmnopqrstuvwxyz123456&v=1';
     final invite = PairingInvite.tryParse(raw);
     expect(invite, isNotNull);
-    expect(invite!.baseUrl, 'http://<your-mac-tailscale-ip>:8787');
+    expect(invite!.baseUrl, 'http://198.51.100.10:8787');
     expect(invite.code, 'abcdefghijklmnopqrstuvwxyz123456');
   });
 
   test('parses web fallback /app/?code= payload', () {
     const raw =
-        'http://<your-mac-tailscale-ip>:8787/app/?code=abcdefghijklmnopqrstuvwxyz123456';
+        'http://198.51.100.10:8787/app/?code=abcdefghijklmnopqrstuvwxyz123456';
     final invite = PairingInvite.tryParse(raw);
     expect(invite, isNotNull);
-    expect(invite!.baseUrl, 'http://<your-mac-tailscale-ip>:8787');
+    expect(invite!.baseUrl, 'http://198.51.100.10:8787');
     expect(invite.code, 'abcdefghijklmnopqrstuvwxyz123456');
   });
 

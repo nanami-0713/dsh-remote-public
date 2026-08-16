@@ -29,6 +29,12 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _error;
   String _pairedDeviceName = '';
 
+  /// All PCs this phone has paired with. The list is sorted by
+  /// `lastConnectedAt` descending (most recently used first).
+  List<SavedEndpoint> _endpoints = [];
+  String? _selectedServer;
+  bool _endpointsLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -36,7 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // camera scan lands here directly and can pair without typing anything.
     final scheme = Uri.base.scheme;
     final launchCode = Uri.base.queryParameters['code']?.trim() ?? '';
-    if ((kIsWeb || scheme == 'http' || scheme == 'https') && launchCode.isNotEmpty) {
+    if ((kIsWeb || scheme == 'http' || scheme == 'https') &&
+        launchCode.isNotEmpty) {
       _pairFromLaunchCode(launchCode);
       return;
     }
@@ -46,10 +53,39 @@ class _HomeScreenState extends State<HomeScreen> {
     _initializeFromDeepLink();
   }
 
+  SavedEndpoint? get _selectedEndpoint {
+    final server = _selectedServer;
+    if (server == null) return null;
+    for (final endpoint in _endpoints) {
+      if (endpoint.server == server) return endpoint;
+    }
+    return null;
+  }
+
+  Future<void> _ensureEndpointsLoaded() async {
+    if (_endpointsLoaded) return;
+    final endpoints = await _store.loadEndpoints();
+    final savedSelected = await _store.loadSelectedServer();
+    if (!mounted) return;
+    _endpointsLoaded = true;
+    _endpoints = endpoints;
+    if (endpoints.isEmpty) {
+      _selectedServer = null;
+      return;
+    }
+    final wanted =
+        savedSelected == null ? null : normalizeServer(savedSelected);
+    _selectedServer = endpoints.any((e) => e.server == wanted)
+        ? wanted
+        : endpoints.first.server;
+  }
+
   Future<void> _initializeFromDeepLink() async {
     final link = await DeepLinkService.initialLink();
     if (!mounted) return;
-    if (link != null && link.isNotEmpty && PairingInvite.tryParse(link) != null) {
+    if (link != null &&
+        link.isNotEmpty &&
+        PairingInvite.tryParse(link) != null) {
       _pairFromRawLink(link);
       return;
     }
@@ -77,20 +113,30 @@ class _HomeScreenState extends State<HomeScreen> {
     PairingInvite invite, {
     required String deviceName,
   }) async {
+    // Load the existing PC list before pairing so a new QR code adds to it
+    // instead of replacing it.
+    await _ensureEndpointsLoaded();
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final result = await PairingService().pair(invite, deviceName: deviceName);
+      final result =
+          await PairingService().pair(invite, deviceName: deviceName);
       if (!mounted) return;
-      setState(() {
-        _serverController.text = result.baseUrl;
-        _tokenController.text = result.token;
-        _pairedDeviceName = result.deviceName.isEmpty ? result.deviceId : result.deviceName;
-        _loading = false;
-      });
-      await _connect(saveOnSuccess: true);
+      await _persistAndSelect(
+        SavedEndpoint(
+          server: normalizeServer(result.baseUrl),
+          token: result.token,
+          label: result.bridgeName,
+          deviceName: result.deviceName,
+          addedAt: DateTime.now().millisecondsSinceEpoch,
+          lastConnectedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      if (!mounted) return;
+      await _connect();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -109,18 +155,85 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _restoreSavedConnection() async {
-    final saved = await _store.load();
-    if (saved == null || !mounted) return;
+    await _ensureEndpointsLoaded();
+    if (!mounted) return;
+    if (_endpoints.isEmpty) {
+      setState(() {});
+      return;
+    }
+    final endpoint = _selectedEndpoint ?? _endpoints.first;
     setState(() {
-      _serverController.text = saved.server;
-      _tokenController.text = saved.token;
-      _pairedDeviceName = saved.deviceName;
+      _selectedServer = endpoint.server;
+      _serverController.text = endpoint.server;
+      _tokenController.text = endpoint.token;
+      _pairedDeviceName = endpoint.deviceName;
     });
-    await _connect(saveOnSuccess: false);
+    await _connect(touchOnSuccess: true);
   }
 
-  Future<void> _connect({bool saveOnSuccess = false}) async {
-    final server = _serverController.text.trim().replaceAll(RegExp(r'/+$'), '');
+  /// Adds (or updates, when re-pairing the same PC) one endpoint and makes it
+  /// the selected PC. Existing PC entries are never removed here.
+  Future<void> _persistAndSelect(SavedEndpoint candidate) async {
+    await _ensureEndpointsLoaded();
+    final server = normalizeServer(candidate.server);
+    SavedEndpoint? existing;
+    for (final endpoint in _endpoints) {
+      if (endpoint.server == server) {
+        existing = endpoint;
+        break;
+      }
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final merged = SavedEndpoint(
+      server: server,
+      token: candidate.token,
+      label: candidate.label.trim().isNotEmpty
+          ? candidate.label
+          : (existing?.label ?? ''),
+      deviceName: candidate.deviceName.trim().isNotEmpty
+          ? candidate.deviceName
+          : (existing?.deviceName ?? ''),
+      addedAt: existing?.addedAt ??
+          (candidate.addedAt > 0 ? candidate.addedAt : nowMs),
+      lastConnectedAt: nowMs,
+    );
+    final next = [
+      for (final endpoint in _endpoints)
+        if (endpoint.server != server) endpoint,
+      merged,
+    ]..sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
+    if (!mounted) return;
+    setState(() {
+      _endpoints = next;
+      _selectedServer = server;
+      _serverController.text = server;
+      _tokenController.text = merged.token;
+      _pairedDeviceName = merged.deviceName;
+      _error = null;
+    });
+    await _store.saveEndpoints(next, selectedServer: server);
+  }
+
+  Future<void> _markSelectedActive() async {
+    final server = _selectedServer;
+    if (server == null) return;
+    await _ensureEndpointsLoaded();
+    final index = _endpoints.indexWhere((e) => e.server == server);
+    if (index < 0) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final next = List<SavedEndpoint>.of(_endpoints);
+    next[index] = next[index].copyWith(lastConnectedAt: nowMs);
+    next.sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
+    if (!mounted) return;
+    setState(() => _endpoints = next);
+    await _store.saveEndpoints(next, selectedServer: server);
+  }
+
+  Future<void> _connect({
+    bool saveOnSuccess = false,
+    bool touchOnSuccess = false,
+  }) async {
+    final server = normalizeServer(_serverController.text);
     final token = _tokenController.text.trim();
     if (server.isEmpty || token.isEmpty) {
       setState(() => _error = '请先扫码绑定，或展开手动配置填写地址和 Token');
@@ -135,12 +248,20 @@ class _HomeScreenState extends State<HomeScreen> {
       final sessions = await _api!.listSessions();
       if (!mounted) return;
       if (saveOnSuccess) {
-        await _store.save(
-          server: server,
-          token: token,
-          deviceName: _pairedDeviceName,
+        await _persistAndSelect(
+          SavedEndpoint(
+            server: server,
+            token: token,
+            label: '',
+            deviceName: _pairedDeviceName,
+            addedAt: 0,
+            lastConnectedAt: DateTime.now().millisecondsSinceEpoch,
+          ),
         );
+      } else if (touchOnSuccess) {
+        await _markSelectedActive();
       }
+      if (!mounted) return;
       setState(() {
         _sessions = sessions;
         _loading = false;
@@ -159,26 +280,99 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => const ScanPairPage()),
     );
     if (result == null || !mounted) return;
-    setState(() {
-      _serverController.text = result.baseUrl;
-      _tokenController.text = result.token;
-      _pairedDeviceName = result.deviceName.isEmpty ? result.deviceId : result.deviceName;
-      _error = null;
-    });
-    await _connect(saveOnSuccess: true);
+    await _persistAndSelect(
+      SavedEndpoint(
+        server: normalizeServer(result.baseUrl),
+        token: result.token,
+        label: result.bridgeName,
+        deviceName: result.deviceName,
+        addedAt: DateTime.now().millisecondsSinceEpoch,
+        lastConnectedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _error = null);
+    await _connect();
   }
 
-  Future<void> _forgetDevice() async {
-    await _store.clear();
-    if (!mounted) return;
+  Future<void> _selectEndpoint(SavedEndpoint endpoint) async {
+    if (_loading || endpoint.server == _selectedServer) return;
     setState(() {
       _api = null;
       _sessions = [];
-      _serverController.clear();
-      _tokenController.clear();
-      _pairedDeviceName = '';
+      _selectedServer = endpoint.server;
+      _serverController.text = endpoint.server;
+      _tokenController.text = endpoint.token;
+      _pairedDeviceName = endpoint.deviceName;
       _error = null;
     });
+    await _store.setSelected(endpoint.server);
+    await _connect(touchOnSuccess: true);
+  }
+
+  Future<void> _forgetEndpoint(SavedEndpoint endpoint) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('忘记这台电脑'),
+        content: Text(
+          '确定从手机移除「${endpoint.displayName}」（${endpoint.server}）？\n'
+          '移除后如要再次控制这台电脑，需要重新扫码绑定。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('忘记'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    await _ensureEndpointsLoaded();
+    final server = normalizeServer(endpoint.server);
+    final wasSelected = _selectedServer == server;
+    final next = [
+      for (final e in _endpoints)
+        if (e.server != server) e,
+    ];
+    final nextSelected = next.isNotEmpty ? next.first.server : null;
+    if (!mounted) return;
+    setState(() {
+      _endpoints = next;
+      _error = null;
+      if (wasSelected) {
+        _api = null;
+        _sessions = [];
+        _selectedServer = nextSelected;
+        if (nextSelected == null) {
+          _serverController.clear();
+          _tokenController.clear();
+          _pairedDeviceName = '';
+        } else {
+          final fallback = next.first;
+          _serverController.text = fallback.server;
+          _tokenController.text = fallback.token;
+          _pairedDeviceName = fallback.deviceName;
+        }
+      }
+    });
+    if (next.isEmpty) {
+      await _store.clearAll();
+    } else {
+      await _store.saveEndpoints(
+        next,
+        selectedServer: _selectedServer ?? next.first.server,
+      );
+    }
+    if (!mounted) return;
+    if (wasSelected && nextSelected != null) {
+      await _connect(touchOnSuccess: true);
+    }
   }
 
   Future<void> _createSession() async {
@@ -210,7 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(
         builder: (_) => ChatScreen(
           api: api,
-          baseUrl: _serverController.text.trim().replaceAll(RegExp(r'/+$'), ''),
+          baseUrl: normalizeServer(_serverController.text),
           token: _tokenController.text.trim(),
           sessionId: sessionId,
           title: title,
@@ -222,6 +416,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final connected = _api != null && !_loading;
+    final selected = _selectedEndpoint;
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -265,9 +460,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    _pairedDeviceName.isEmpty
+                    selected == null
                         ? '电脑端打开 http://127.0.0.1:8787/pair/qr，手机扫码即可绑定'
-                        : '已绑定设备：$_pairedDeviceName',
+                        : '当前电脑：${selected.displayName}\n'
+                            '${selected.server}\n'
+                            '手机在这台电脑上的名称：${selected.deviceLabel}',
                     style: const TextStyle(fontSize: 13, color: kTextSecondary),
                   ),
                   const SizedBox(height: 16),
@@ -276,9 +473,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: FilledButton.icon(
                       onPressed: _loading ? null : _scanAndPair,
                       icon: _loading
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
                           : const Icon(Icons.qr_code_scanner, size: 18),
-                      label: Text(_pairedDeviceName.isEmpty ? '扫码绑定设备' : '重新扫码绑定'),
+                      label: Text(
+                        _endpoints.isEmpty ? '扫码绑定电脑' : '扫码绑定另一台电脑',
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -286,7 +492,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _loading ? null : () => _connect(saveOnSuccess: true),
+                          onPressed: _loading
+                              ? null
+                              : () => _connect(saveOnSuccess: true),
                           icon: const Icon(Icons.cloud_sync_outlined, size: 18),
                           label: Text(connected ? '连接 / 刷新' : '连接'),
                         ),
@@ -299,13 +507,17 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
-                  if (_pairedDeviceName.isNotEmpty) ...[
+                  if (selected != null) ...[
                     const SizedBox(height: 4),
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
-                        onPressed: _loading ? null : _forgetDevice,
-                        child: const Text('忘记此设备', style: TextStyle(color: kTextSecondary, fontSize: 13)),
+                        onPressed:
+                            _loading ? null : () => _forgetEndpoint(selected),
+                        child: const Text(
+                          '忘记这台电脑',
+                          style: TextStyle(color: kTextSecondary, fontSize: 13),
+                        ),
                       ),
                     ),
                   ],
@@ -320,7 +532,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       child: Text(
                         _error!,
-                        style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13),
+                        style: const TextStyle(
+                            color: Color(0xFFB91C1C), fontSize: 13),
                       ),
                     ),
                   ],
@@ -328,12 +541,100 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+          if (_endpoints.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '电脑列表',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${_endpoints.length}',
+                          style: const TextStyle(
+                              fontSize: 13, color: kTextSecondary),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    for (final endpoint in _endpoints)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        selected: endpoint.server == _selectedServer,
+                        selectedTileColor: const Color(0xFFEEF2FF),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF2FF),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.computer_outlined,
+                            color: kDshBlue,
+                            size: 20,
+                          ),
+                        ),
+                        title: Text(
+                          endpoint.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${endpoint.server}\n手机在此电脑的名称：${endpoint.deviceLabel}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (endpoint.server == _selectedServer)
+                              const Icon(Icons.check_circle,
+                                  color: kDshBlue, size: 20),
+                            IconButton(
+                              tooltip: '忘记这台电脑',
+                              onPressed: _loading
+                                  ? null
+                                  : () => _forgetEndpoint(endpoint),
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                size: 20,
+                                color: kTextSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        onTap:
+                            _loading ? null : () => _selectEndpoint(endpoint),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Card(
             clipBehavior: Clip.antiAlias,
             child: ExpansionTile(
-              title: const Text('手动配置（高级）', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              subtitle: const Text('不推荐；优先使用扫码绑定', style: TextStyle(fontSize: 12, color: kTextSecondary)),
+              title: const Text(
+                '手动配置（高级）',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text(
+                '不推荐；优先使用扫码绑定',
+                style: TextStyle(fontSize: 12, color: kTextSecondary),
+              ),
               childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               expandedCrossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -371,7 +672,10 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const Text(
                 '会话',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kTextPrimary),
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: kTextPrimary),
               ),
               const Spacer(),
               if (_sessions.isNotEmpty)
@@ -383,7 +687,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 8),
           if (_loading)
-            const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: CircularProgressIndicator(),
+              ),
+            )
           else if (_sessions.isEmpty)
             Container(
               padding: const EdgeInsets.all(24),
@@ -410,9 +719,14 @@ class _HomeScreenState extends State<HomeScreen> {
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                   leading: running
-                      ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : Container(
                           width: 36,
                           height: 36,
@@ -420,11 +734,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: const Color(0xFFEEF2FF),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(Icons.chat_bubble_outline, color: kDshBlue, size: 20),
+                          child: const Icon(Icons.chat_bubble_outline,
+                              color: kDshBlue, size: 20),
                         ),
-                  title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('$cwd\n$id', maxLines: 2, overflow: TextOverflow.ellipsis),
-                  trailing: const Icon(Icons.chevron_right, color: kTextSecondary),
+                  title:
+                      Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('$cwd\n$id',
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  trailing:
+                      const Icon(Icons.chevron_right, color: kTextSecondary),
                   onTap: () => _openChat(id, title),
                 ),
               );

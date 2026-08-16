@@ -1,7 +1,7 @@
 name: dsh_remote
 description: Flutter app to remotely control local DeepSeek Harness (DSH) through a bridge.
 publish_to: 'none'
-version: 0.3.3+5
+version: 0.4.0+6
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

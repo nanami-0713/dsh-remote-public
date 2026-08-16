@@ -27,9 +27,7 @@ class PairingInvite {
     final scheme = uri.scheme.toLowerCase();
     if (scheme == 'http' || scheme == 'https') {
       if (uri.path != '/app' && !uri.path.startsWith('/app/')) return null;
-      final authority = uri.hasPort
-          ? '${uri.host}:${uri.port}'
-          : uri.host;
+      final authority = uri.hasPort ? '${uri.host}:${uri.port}' : uri.host;
       final base = '$scheme://$authority';
       return PairingInvite(baseUrl: base, code: code, version: 1);
     }
@@ -52,12 +50,17 @@ class PairingResult {
     required this.token,
     required this.deviceId,
     required this.deviceName,
+    this.bridgeName = '',
   });
 
   final String baseUrl;
   final String token;
   final String deviceId;
   final String deviceName;
+
+  /// Human-friendly name of the PC (bridge hostname), used to label the
+  /// endpoint in the multi-PC list. Empty when talking to an older bridge.
+  final String bridgeName;
 }
 
 class PairingException implements Exception {
@@ -78,7 +81,8 @@ class PairingService {
   static const _pollInterval = Duration(seconds: 1);
   static const _requestTimeout = Duration(seconds: 10);
 
-  Future<PairingResult> pair(PairingInvite invite, {required String deviceName}) async {
+  Future<PairingResult> pair(PairingInvite invite,
+      {required String deviceName}) async {
     final base = invite.baseUrl.replaceAll(RegExp(r'/+$'), '');
     final claim = await _postJson(
       Uri.parse('$base/pair/claim'),
@@ -104,7 +108,8 @@ class PairingService {
         throw const PairingException('配对确认超时，请在电脑上重新生成二维码', retryable: true);
       }
       await Future<void>.delayed(_pollInterval);
-      final poll = await _getJson(Uri.parse('$base/pair/status?id=${Uri.encodeQueryComponent(pairId)}'));
+      final poll = await _getJson(Uri.parse(
+          '$base/pair/status?id=${Uri.encodeQueryComponent(pairId)}'));
       final pollStatus = poll['status'] as String?;
       if (pollStatus == 'approved') {
         final token = poll['token'] as String?;
@@ -131,10 +136,12 @@ class PairingService {
       token: token,
       deviceId: device?['id'] as String? ?? '',
       deviceName: device?['name'] as String? ?? '',
+      bridgeName: json['bridgeName'] as String? ?? '',
     );
   }
 
-  Future<Map<String, dynamic>> _postJson(Uri uri, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _postJson(
+      Uri uri, Map<String, dynamic> body) async {
     final res = await _client
         .post(
           uri,
@@ -164,7 +171,8 @@ class PairingService {
       throw const PairingException('尝试过于频繁，请稍后再试', retryable: true);
     }
     if (res.statusCode != 200) {
-      throw PairingException('配对服务异常 (HTTP ${res.statusCode})', retryable: true);
+      throw PairingException('配对服务异常 (HTTP ${res.statusCode})',
+          retryable: true);
     }
     try {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;

@@ -56,6 +56,7 @@ function ensureConfig() {
     pairPendingTtlMs: 600000,
     pairRequireApproval: true,
     devicesFile: 'devices.json',
+    bridgeName: os.hostname(),
     rateLimit: { windowMs: 60000, max: 120 },
   };
   let existing = {};
