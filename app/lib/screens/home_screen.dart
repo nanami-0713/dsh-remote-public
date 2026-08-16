@@ -7,6 +7,7 @@ import '../services/deep_link.dart';
 import '../services/dsh_api.dart';
 import '../services/pairing.dart';
 import 'chat_screen.dart';
+import 'new_session_sheet.dart';
 import 'scan_pair_page.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -35,6 +36,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _selectedServer;
   bool _endpointsLoaded = false;
 
+  /// Privacy guard: IP addresses, filesystem paths and session ids stay
+  /// masked until the user taps the small eye icon.
+  bool _sensitiveVisible = false;
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +65,35 @@ class _HomeScreenState extends State<HomeScreen> {
       if (endpoint.server == server) return endpoint;
     }
     return null;
+  }
+
+  /// Default-private rendering helpers. Sensitive values render as fixed
+  /// bullets until [_sensitiveVisible] is toggled on.
+  String _maskServer(String server) {
+    final uri = Uri.tryParse(server);
+    if (uri == null || !uri.hasAuthority) return '••••••••';
+    final port = uri.hasPort ? ':${uri.port}' : '';
+    return '${uri.scheme}://••••••$port';
+  }
+
+  String _serverText(String server) =>
+      _sensitiveVisible ? server : _maskServer(server);
+
+  String _sensitiveText(String value) => _sensitiveVisible ? value : '••••••••';
+
+  Widget _buildPrivacyToggle() {
+    return IconButton(
+      tooltip: _sensitiveVisible ? '隐藏隐私信息' : '显示隐私信息',
+      visualDensity: VisualDensity.compact,
+      onPressed: () => setState(() => _sensitiveVisible = !_sensitiveVisible),
+      icon: Icon(
+        _sensitiveVisible
+            ? Icons.visibility_off_outlined
+            : Icons.visibility_outlined,
+        size: 20,
+        color: kTextSecondary,
+      ),
+    );
   }
 
   Future<void> _ensureEndpointsLoaded() async {
@@ -210,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _tokenController.text = merged.token;
       _pairedDeviceName = merged.deviceName;
       _error = null;
+      _sensitiveVisible = false;
     });
     await _store.saveEndpoints(next, selectedServer: server);
   }
@@ -305,6 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _tokenController.text = endpoint.token;
       _pairedDeviceName = endpoint.deviceName;
       _error = null;
+      _sensitiveVisible = false;
     });
     await _store.setSelected(endpoint.server);
     await _connect(touchOnSuccess: true);
@@ -316,7 +352,8 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => AlertDialog(
         title: const Text('忘记这台电脑'),
         content: Text(
-          '确定从手机移除「${endpoint.displayName}」（${endpoint.server}）？\n'
+          '确定从手机移除「${endpoint.displayName}」'
+          '（${_serverText(endpoint.server)}）？\n'
           '移除后如要再次控制这台电脑，需要重新扫码绑定。',
         ),
         actions: [
@@ -345,6 +382,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _endpoints = next;
       _error = null;
+      _sensitiveVisible = false;
       if (wasSelected) {
         _api = null;
         _sessions = [];
@@ -378,15 +416,61 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _createSession() async {
     final api = _api;
     if (api == null) return;
-    setState(() => _loading = true);
+
+    final config = await showModalBottomSheet<NewSessionConfig>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => NewSessionSheet(
+        api: api,
+        initialCwd: _cwdController.text.trim(),
+      ),
+    );
+    if (config == null || !mounted) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    String? modelError;
     try {
-      final created = await api.createSession(cwd: _cwdController.text.trim());
+      final created = await api.createSession(
+        workspaceId: config.workspaceId,
+        cwd: config.workspaceId == null && config.cwd.isNotEmpty
+            ? config.cwd
+            : null,
+        agentPreset: config.agentPreset,
+      );
       if (!mounted) return;
       final sessionId = created['sessionId'] as String?;
-      if (sessionId != null) {
-        await _connect();
-        if (!mounted) return;
-        _openChat(sessionId, '新会话');
+      if (sessionId == null) {
+        setState(() {
+          _loading = false;
+          _error = 'DSH 没有返回新会话 ID';
+        });
+        return;
+      }
+
+      if (config.provider != null && config.model != null) {
+        try {
+          await api.selectModel(
+            sessionId: sessionId,
+            provider: config.provider!,
+            model: config.model!,
+            reasoningEffort: config.reasoningEffort,
+          );
+        } catch (e) {
+          modelError = '会话已创建，但设置模型失败：$e';
+        }
+      }
+
+      await _connect();
+      if (!mounted) return;
+      _openChat(sessionId, '新会话');
+      if (modelError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(modelError)),
+        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -454,16 +538,23 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '连接 DSH',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  Row(
+                    children: [
+                      const Text(
+                        '连接 DSH',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                      const Spacer(),
+                      _buildPrivacyToggle(),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(
                     selected == null
                         ? '电脑端打开 http://127.0.0.1:8787/pair/qr，手机扫码即可绑定'
                         : '当前电脑：${selected.displayName}\n'
-                            '${selected.server}\n'
+                            '${_serverText(selected.server)}\n'
                             '手机在这台电脑上的名称：${selected.deviceLabel}',
                     style: const TextStyle(fontSize: 13, color: kTextSecondary),
                   ),
@@ -562,6 +653,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           style: const TextStyle(
                               fontSize: 13, color: kTextSecondary),
                         ),
+                        _buildPrivacyToggle(),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -592,7 +684,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         subtitle: Text(
-                          '${endpoint.server}\n手机在此电脑的名称：${endpoint.deviceLabel}',
+                          '${_serverText(endpoint.server)}\n手机在此电脑的名称：${endpoint.deviceLabel}',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -683,6 +775,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   '${_sessions.length}',
                   style: const TextStyle(fontSize: 13, color: kTextSecondary),
                 ),
+              _buildPrivacyToggle(),
             ],
           ),
           const SizedBox(height: 8),
@@ -739,8 +832,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                   title:
                       Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('$cwd\n$id',
-                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(
+                      '${_sensitiveText(cwd.isEmpty ? '默认工作目录' : cwd)}\n${_sensitiveText(id)}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
                   trailing:
                       const Icon(Icons.chevron_right, color: kTextSecondary),
                   onTap: () => _openChat(id, title),

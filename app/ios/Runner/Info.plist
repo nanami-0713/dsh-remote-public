@@ -37,6 +37,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSCameraUsageDescription</key>
 	<string>扫描电脑端 DSH-Remote 配对二维码以绑定设备</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>从相册选择图片发送到 DSH 会话</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

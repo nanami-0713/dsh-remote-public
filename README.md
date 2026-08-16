@@ -144,9 +144,12 @@ flutter run
 - 扫码绑定：自动获取设备专属 token（原生端存 Keychain/Keystore）
 - 多电脑切换：保存所有配对过的电脑，扫新电脑自动追加；首页「电脑列表」切换，可单独忘记
 - 自动连接：下次打开直接连回上次选中的电脑
-- 查看 DSH 会话列表、新建会话、发送指令
-- 实时查看 DSH 执行过程 / 流式输出
+- 查看 DSH 会话列表
+- 新建会话：可选预设（agent preset）、模型供应商 / 模型 / 推理强度、工作文件夹（直接选择电脑端已登记的 workspace，也可手填路径）
+- 发送指令，支持从相册选择图片一起发送
+- 实时查看 DSH 执行过程 / 流式输出；步骤与工具调用明细默认折叠，点步骤卡片展开；历史里的海量 token 流自动合并成完整消息
 - 手机上批准 DSH 审批请求、回答 DSH 提问
+- 隐私保护：电脑 IP 地址、工作目录、会话 ID 默认打码，点眼睛图标后显示
 - 手动配置（高级）：仍可手填桥接地址和 Token
 - Web 版兜底：系统相机扫码直接打开并自动配对
 
@@ -201,6 +204,6 @@ dart run tool/bridge_integration_test.dart
 - 公网必须 HTTPS + Token。
 - 二维码只携带一次性配对码（3 分钟有效、单次使用），永远不携带永久 token；默认需电脑端点「允许」。
 - 每台手机签发独立设备 token，散列存储，可在配对页单独吊销。
-- bridge 对 DSH 方法默认拒绝，只放行 `session.*` 与 `respond`。
+- bridge 对 DSH 方法默认拒绝，只放行手机 App 需要的 `session.list/create/models/selectModel/prompt/cancel/history`、`agentPreset.list`、`llm.models`、`workspace.list`（只读）与 `respond`。
 - 开启 bridge 的 IP 白名单和限流。
 - `bridge/config.json` 和 `bridge/devices.json` 已加入 `.gitignore`，不要提交真实 Token 或设备表。

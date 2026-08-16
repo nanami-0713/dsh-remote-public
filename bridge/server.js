@@ -35,9 +35,14 @@ const DEFAULTS = {
 const ALLOWED_METHODS = new Set([
   'session.list',
   'session.create',
+  'session.models',
+  'session.selectModel',
   'session.prompt',
   'session.cancel',
   'session.history',
+  'agentPreset.list',
+  'llm.models',
+  'workspace.list',
   'respond',
 ]);
 

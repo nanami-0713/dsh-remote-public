@@ -40,7 +40,8 @@ class DshApi {
     if (res.statusCode != 200) {
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     }
-    final decoded = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    final decoded =
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     final result = decoded['result'] as Map<String, dynamic>?;
     if (result == null || result['ok'] != true) {
       final error = result?['error'] as Map<String, dynamic>?;
@@ -55,19 +56,79 @@ class DshApi {
     return items.cast<Map<String, dynamic>>();
   }
 
-  Future<Map<String, dynamic>> createSession({String? cwd}) async {
+  Future<Map<String, dynamic>> createSession({
+    String? cwd,
+    String? workspaceId,
+    String? agentPreset,
+  }) async {
     return _post('session.create', {
       if (cwd != null && cwd.isNotEmpty) 'cwd': cwd,
+      if (workspaceId != null && workspaceId.isNotEmpty)
+        'workspaceId': workspaceId,
+      if (agentPreset != null && agentPreset.isNotEmpty)
+        'agentPreset': agentPreset,
+    });
+  }
+
+  /// Read-only list of the workspaces already registered on this PC.
+  /// The bridge deliberately does NOT expose `host.listDirectory`: a phone
+  /// may pick a work folder, but it may not browse the whole filesystem.
+  Future<List<Map<String, dynamic>>> listWorkspaces() async {
+    final value = await _post('workspace.list', {});
+    final items = (value['items'] as List<dynamic>? ?? []);
+    return items.cast<Map<String, dynamic>>();
+  }
+
+  /// The global model catalog (provider groups / models) exposed by the host.
+  /// Used before a session exists so the phone can offer model selection in
+  /// the new-session flow.
+  Future<Map<String, dynamic>> listModels() async {
+    return _post('llm.models', {});
+  }
+
+  Future<List<Map<String, dynamic>>> listAgentPresets() async {
+    final value = await _post('agentPreset.list', {});
+    final items = (value['presets'] as List<dynamic>? ?? []);
+    return items.cast<Map<String, dynamic>>();
+  }
+
+  /// Current model selection and catalog for an existing session.
+  Future<Map<String, dynamic>> sessionModels(String sessionId) async {
+    return _post('session.models', {'sessionId': sessionId});
+  }
+
+  Future<Map<String, dynamic>> selectModel({
+    required String sessionId,
+    required String provider,
+    required String model,
+    String? reasoningEffort,
+  }) async {
+    return _post('session.selectModel', {
+      'sessionId': sessionId,
+      'provider': provider,
+      'model': model,
+      if (reasoningEffort != null && reasoningEffort.isNotEmpty)
+        'reasoningEffort': reasoningEffort,
     });
   }
 
   Future<void> prompt(String sessionId, String text) async {
+    await promptContent(sessionId, [
+      {'type': 'text', 'text': text},
+    ]);
+  }
+
+  /// [content] follows the DSH wire format:
+  ///   {'type': 'text', 'text': ...}
+  ///   {'type': 'image', 'mediaType': 'image/png', 'data': '<base64>', 'name': ...}
+  Future<void> promptContent(
+    String sessionId,
+    List<Map<String, dynamic>> content,
+  ) async {
     await _post('session.prompt', {
       'sessionId': sessionId,
       'mode': 'steer',
-      'content': [
-        {'type': 'text', 'text': text},
-      ],
+      'content': content,
     });
   }
 
@@ -107,7 +168,8 @@ class DshApi {
     });
   }
 
-  Future<void> _postClientResponse(String rpcId, Map<String, dynamic> value) async {
+  Future<void> _postClientResponse(
+      String rpcId, Map<String, dynamic> value) async {
     final body = jsonEncode({
       'type': 'client-response',
       'rpcId': rpcId,

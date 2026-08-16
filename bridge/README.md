@@ -111,5 +111,5 @@ wscat -c "ws://127.0.0.1:8787/ws/events.mux?token=<TOKEN>"
 - 公网访问时，桥接服务前面必须再加一层 HTTPS（Cloudflare Tunnel / ngrok / frp + TLS）。
 - Token 要够长、够随机；建议开启 IP 白名单和限流。
 - 配对二维码只携带一次性配对码，**永远不携带永久 token**；配对码单次有效、默认 3 分钟过期，默认还需电脑端点「允许」。
-- API 采用默认拒绝策略，只放行手机 App 需要的 `session.*` 与 `respond` 方法；`credentials.*`、`settings.*`、`host.*` 等一律 403。
+- API 采用默认拒绝策略，只放行手机 App 需要的 `session.list/create/models/selectModel/prompt/cancel/history`、`agentPreset.list`、`llm.models`、`workspace.list`（只读，用于选择工作文件夹）与 `respond` 方法；`credentials.*`、`settings.*`、`host.*` 等一律 403。
 - 设备 token 可单独吊销（配对页设备列表），吊销立即生效。
