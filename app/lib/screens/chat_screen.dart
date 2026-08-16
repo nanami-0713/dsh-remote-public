@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../main.dart';
@@ -71,6 +72,27 @@ class _ProcessGroup {
   int get toolResultCount => lines.where((l) => l.kind == 'tool-result').length;
 }
 
+/// One provider-reported token usage sample for a `turn:step`.
+class _UsageSample {
+  _UsageSample({
+    required this.inputTokens,
+    required this.outputTokens,
+    this.cacheReadTokens = 0,
+    this.cacheWriteTokens = 0,
+    this.reasoningTokens = 0,
+  });
+
+  final int inputTokens;
+  final int outputTokens;
+  final int cacheReadTokens;
+  final int cacheWriteTokens;
+  final int reasoningTokens;
+
+  /// Prompt-side billed input: uncached input + cache reads + cache writes.
+  int get billedInputTokens =>
+      inputTokens + cacheReadTokens + cacheWriteTokens;
+}
+
 /// One image queued in the composer, already read into memory as base64-ready
 /// bytes with the DSH wire media type resolved.
 class _PendingImage {
@@ -99,6 +121,13 @@ class _ChatScreenState extends State<ChatScreen> {
   /// of one-token deltas.
   final Map<String, _LogLine> _chunkLines = {};
   final Map<String, StringBuffer> _chunkBuffers = {};
+
+  /// Token/context accounting: per-step samples replace earlier samples for
+  /// the same step so final assistant messages don't double-count streamed
+  /// usage chunks.
+  final Map<String, _UsageSample> _usageByStep = {};
+  _UsageSample? _latestUsage;
+  int? _contextWindow;
 
   DshStream? _stream;
   Timer? _refreshTimer;
@@ -354,6 +383,12 @@ class _ChatScreenState extends State<ChatScreen> {
       case 'turn/end':
         _addLine('system', '✅ 执行结束', notify: notify);
         break;
+      case 'request/context':
+        final window = data['contextWindow'];
+        if (window is num && window > 0) {
+          _contextWindow = window.toInt();
+        }
+        break;
       default:
         // step/start and step/end carry no content; the per-step card header
         // already identifies each step.
@@ -391,6 +426,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _chunkBuffers.remove(key);
       if (line != null) _lines.remove(line);
     }
+    final usage = message is Map<String, dynamic>
+        ? (message['usage'] ?? data['usage'])
+        : data['usage'];
+    if (usage is Map<String, dynamic>) {
+      _recordUsage(usage, stepKey: _stepKey(data));
+    }
     final text = _textFromMessage(message);
     _addLine('assistant', text, notify: notify);
   }
@@ -401,6 +442,14 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool notify,
   }) {
     if (chunk is! Map<String, dynamic>) return;
+    if (chunk['type'] == 'usage') {
+      _recordUsage(
+        chunk['usage'] as Map<String, dynamic>?,
+        stepKey: _stepKey(data),
+      );
+      if (notify) _scheduleRefresh();
+      return;
+    }
     if (chunk['type'] != 'text') return;
     final delta = chunk['text']?.toString() ?? '';
     if (delta.isEmpty) return;
@@ -419,6 +468,70 @@ class _ChatScreenState extends State<ChatScreen> {
       if (line != null) _chunkLines[key] = line;
     }
     if (notify) _scheduleRefresh();
+  }
+
+  void _recordUsage(Map<String, dynamic>? usage, {String stepKey = ''}) {
+    if (usage == null) return;
+    final sample = _UsageSample(
+      inputTokens: _intOrZero(usage['inputTokens']),
+      outputTokens: _intOrZero(usage['outputTokens']),
+      cacheReadTokens: _intOrZero(usage['cacheReadTokens']),
+      cacheWriteTokens: _intOrZero(usage['cacheWriteTokens']),
+      reasoningTokens: _intOrZero(usage['reasoningTokens']),
+    );
+    if (stepKey.isNotEmpty) {
+      _usageByStep[stepKey] = sample;
+    }
+    _latestUsage = sample;
+  }
+
+  int _intOrZero(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return 0;
+  }
+
+  ({int billedInput, int output, int cacheRead}) get _usageTotals {
+    var billedInput = 0;
+    var output = 0;
+    var cacheRead = 0;
+    for (final sample in _usageByStep.values) {
+      billedInput += sample.billedInputTokens;
+      output += sample.outputTokens;
+      cacheRead += sample.cacheReadTokens;
+    }
+    return (billedInput: billedInput, output: output, cacheRead: cacheRead);
+  }
+
+  String? get _statsLine {
+    final totals = _usageTotals;
+    if (totals.billedInput == 0 && totals.output == 0 && _contextWindow == null) {
+      return null;
+    }
+    final parts = <String>[];
+    final used = _latestUsage?.billedInputTokens;
+    if (used != null && _contextWindow != null) {
+      parts.add('上下文 ${_formatTokens(used)} / ${_formatTokens(_contextWindow!)}');
+    }
+    if (totals.billedInput > 0) {
+      final cachePercent = totals.cacheRead * 100 ~/ totals.billedInput;
+      parts.add('缓存 $cachePercent%');
+    }
+    if (totals.billedInput > 0 || totals.output > 0) {
+      parts.add('输入 ${_formatTokens(totals.billedInput)} · '
+          '输出 ${_formatTokens(totals.output)}');
+    }
+    return parts.isEmpty ? null : parts.join('  ·  ');
+  }
+
+  String _formatTokens(int n) {
+    if (n < 1000) return '$n';
+    if (n < 1000000) {
+      final v = n / 1000;
+      return v >= 100 ? '${v.round()}K' : '${v.toStringAsFixed(1)}K';
+    }
+    final v = n / 1000000;
+    return v >= 100 ? '${v.round()}M' : '${v.toStringAsFixed(1)}M';
   }
 
   String _stepKey(Map<String, dynamic> data) {
@@ -768,6 +881,20 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          if (_statsLine != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              color: const Color(0xFFF3F4F6),
+              child: Text(
+                _statsLine!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: kTextSecondary,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -1074,10 +1201,25 @@ class MessageBubble extends StatelessWidget {
                     ),
                     border: Border.all(color: kBorder),
                   ),
-                  child: SelectableText(
-                    text,
-                    style: const TextStyle(
-                        color: kTextPrimary, fontSize: 14, height: 1.4),
+                  child: MarkdownBody(
+                    data: text,
+                    selectable: true,
+                    styleSheet:
+                        MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                      p: const TextStyle(
+                          color: kTextPrimary, fontSize: 14, height: 1.4),
+                      code: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        color: kTextPrimary,
+                        backgroundColor: Color(0xFFF3F4F6),
+                      ),
+                      codeblockPadding: const EdgeInsets.all(8),
+                      codeblockDecoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
                   ),
                 ),
               ),
