@@ -2,10 +2,13 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../services/bridge_notify.dart';
 import '../services/credential_store.dart';
 import '../services/deep_link.dart';
 import '../services/dsh_api.dart';
+import '../services/notification_settings.dart';
 import '../services/pairing.dart';
+import '../services/phone_notifier.dart';
 import 'chat_screen.dart';
 import 'new_session_sheet.dart';
 import 'scan_pair_page.dart';
@@ -279,6 +282,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _loading = true;
       _error = null;
     });
+    // 切换了电脑时，先停掉旧电脑的提醒监听流。
+    final notifyService = BridgeNotifyService.instance;
+    if (notifyService.active && notifyService.baseUrl != server) {
+      notifyService.stop();
+    }
     try {
       final sessions = await _api!.listSessions();
       if (!mounted) return;
@@ -301,6 +309,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _sessions = sessions;
         _loading = false;
       });
+      // 连接成功：启动全局提醒监听，PC 弹窗副本（任务完成/需要回答）会以横幅到达。
+      notifyService.start(baseUrl: server, token: token);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -328,6 +338,106 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() => _error = null);
     await _connect();
+  }
+
+  /// 提醒设置：手机接收开关 + 按类型开关 + 跨窗口系统通知。
+  void _openNotificationSettings() {
+    final store = NotificationSettingsStore.instance;
+    final notifier = PhoneNotifier.instance;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return ValueListenableBuilder<NotificationSettings>(
+          valueListenable: store.notifier,
+          builder: (context, settings, _) {
+            final crossWindowSupported = notifier.supported;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '手机提醒',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'PC 弹窗（任务完成 / 需要你回答）推送到手机的开关，'
+                      '与电脑端 dsh-notifier 的开关相互独立。',
+                      style: TextStyle(fontSize: 12, color: kTextSecondary),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('接收手机提醒'),
+                      subtitle: const Text('关闭后完全忽略 PC 推来的提醒'),
+                      value: settings.enabled,
+                      onChanged: (value) async {
+                        await store.save(settings.copyWith(enabled: value));
+                        if (value && crossWindowSupported) {
+                          await notifier.requestPermission();
+                        }
+                      },
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('任务完成'),
+                      subtitle: const Text('会话运行结束提醒'),
+                      value: settings.enabled && settings.done,
+                      onChanged: settings.enabled
+                          ? (value) =>
+                              store.save(settings.copyWith(done: value))
+                          : null,
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('需要你回答'),
+                      subtitle: const Text('PC 弹窗提问时提醒'),
+                      value: settings.enabled && settings.question,
+                      onChanged: settings.enabled
+                          ? (value) =>
+                              store.save(settings.copyWith(question: value))
+                          : null,
+                    ),
+                    const Divider(height: 24),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('跨窗口系统通知'),
+                      subtitle: Text(
+                        crossWindowSupported
+                            ? '以系统通知悬浮在其他应用之上（Android heads-up / iOS 横幅），点击直达会话'
+                            : '网页版不支持系统通知，自动使用应用内横幅',
+                      ),
+                      value: settings.enabled && settings.systemAlerts,
+                      onChanged:
+                          (settings.enabled && crossWindowSupported)
+                              ? (value) async {
+                                  await store.save(
+                                      settings.copyWith(systemAlerts: value));
+                                  if (value) {
+                                    await notifier.requestPermission();
+                                  }
+                                }
+                              : null,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '提示：App 需要保持前台（事件流已连接）才能收到提醒；'
+                      '系统通知在收到时悬浮显示，即使你正在看其他应用。',
+                      style: TextStyle(fontSize: 11, color: kTextSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _selectEndpoint(SavedEndpoint endpoint) async {
@@ -528,6 +638,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: '提醒设置',
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: _openNotificationSettings,
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

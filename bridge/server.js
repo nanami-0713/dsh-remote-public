@@ -44,6 +44,10 @@ const ALLOWED_METHODS = new Set([
   'llm.models',
   'workspace.list',
   'respond',
+  // Handled locally (not proxied to DSH): desktop-side plugins push a copy of
+  // their popup notifications here, and the bridge fans them out to every
+  // currently connected phone over the WebSocket stream.
+  'notify.push',
 ]);
 
 function loadConfig() {
@@ -424,7 +428,14 @@ const server = http.createServer(async (req, res) => {
 
   const method = pathname.slice(5);
   if (!ALLOWED_METHODS.has(method)) {
-    sendText(res, 403, 'method not allowed on remote bridge');
+    console.error(`[bridge] method not allowed: "${method}" from ${ip}`);
+    sendText(res, 403, `method not allowed on remote bridge: ${method}`);
+    return;
+  }
+
+  // Locally handled endpoints (never proxied to DSH).
+  if (method === 'notify.push') {
+    await handleNotifyPush(req, res, auth);
     return;
   }
 
@@ -438,6 +449,60 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
+
+/** Every authenticated WebSocket client currently streaming DSH events. */
+const notifyClients = new Set();
+
+const NOTIFY_KINDS = new Set(['done', 'approval', 'question', 'error']);
+const NOTIFY_BODY_BYTES_MAX = 16 * 1024;
+
+/**
+ * Desktop-side plugins (e.g. dsh-notifier) push a copy of their PC popups here.
+ * Only the master token may push; device tokens are receivers, not senders.
+ * The frame is broadcast to every connected phone so the app can show a
+ * local banner even when that session is not open on the phone.
+ */
+async function handleNotifyPush(req, res, auth) {
+  if (auth.kind !== 'master') {
+    sendText(res, 403, 'notify.push requires the master token');
+    return;
+  }
+  let body;
+  try {
+    const raw = await readBody(req);
+    if (raw.length > NOTIFY_BODY_BYTES_MAX) {
+      sendText(res, 413, 'notify payload too large');
+      return;
+    }
+    body = JSON.parse(raw.toString('utf8'));
+  } catch {
+    sendJson(res, 400, { error: 'invalid_json', message: 'body must be a JSON object' });
+    return;
+  }
+  const kind = String(body?.kind ?? '');
+  if (!NOTIFY_KINDS.has(kind)) {
+    sendJson(res, 400, { error: 'invalid_kind', message: 'kind must be one of: done, approval, question, error' });
+    return;
+  }
+  const frame = JSON.stringify({
+    type: 'bridge/notify',
+    payload: {
+      kind,
+      title: String(body.title ?? '').slice(0, 200),
+      message: String(body.message ?? '').slice(0, 500),
+      sessionId: typeof body.sessionId === 'string' ? body.sessionId.slice(0, 200) : '',
+      at: Date.now(),
+    },
+  });
+  let delivered = 0;
+  for (const client of notifyClients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(frame);
+      delivered += 1;
+    }
+  }
+  sendJson(res, 200, { ok: true, delivered });
+}
 
 async function pipeDshEventsToWebSocket(socket, dshWsUrl) {
   let upstream;
@@ -510,6 +575,9 @@ server.on('upgrade', (req, socket, head) => {
   if (auth.device) pairing.touchDevice(auth.device);
 
   wss.handleUpgrade(req, socket, head, (ws) => {
+    notifyClients.add(ws);
+    ws.on('close', () => notifyClients.delete(ws));
+    ws.on('error', () => notifyClients.delete(ws));
     const dshWsUrl = config.dshBaseUrl.replace(/^http/, 'ws') + '/api/events.mux';
     pipeDshEventsToWebSocket(ws, dshWsUrl);
   });
@@ -523,5 +591,6 @@ server.listen(config.port, config.host, () => {
   console.log(`[bridge] pairing page: http://127.0.0.1:${config.port}/pair/qr (desktop only)`);
   console.log(`[bridge] mobile web app: ${webRoot ? `http://<host>:${config.port}/app/` : 'not built (flutter build web --release)'}`);
   console.log(`[bridge] API allowlist: ${[...ALLOWED_METHODS].join(', ')}`);
+  console.log('[bridge] notify.push (master token only) fans PC popups out to connected phones.');
   console.log('[bridge] keep your token secret; never expose DSH 3080 directly.');
 });

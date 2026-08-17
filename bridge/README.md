@@ -103,7 +103,22 @@ curl -X POST http://127.0.0.1:8787/api/session.list \
 
 # WebSocket 实时流（可用 wscat 测试）
 wscat -c "ws://127.0.0.1:8787/ws/events.mux?token=<TOKEN>"
+
+# 桌面端把 PC 弹窗提醒推一份给手机（仅主 token 可用）
+curl -X POST http://127.0.0.1:8787/api/notify.push \
+  -H "Authorization: Bearer <MASTER_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"done","title":"DSH 任务完成","message":"会话已运行结束","sessionId":"<sessionId>"}'
 ```
+
+## 手机提醒（bridge/notify）
+
+dsh-notifier 等桌面插件在本机弹窗时，可以调用 `/api/notify.push`（仅主 token 可用）把提醒转发给手机：
+
+- 桥会把 `{"type":"bridge/notify","payload":{kind,title,message,sessionId,at}}` 广播给**当前已连接**的所有设备 WebSocket；
+- `kind` 取值：`done`（任务完成）、`question`（需要你回答）、`approval`（需要批准）、`error`（任务出错）；
+- 手机 App 处于前台（事件流已连接）时才会收到；App 未打开或后台被杀时无法送达（局域网桥没有系统级推送通道）；
+- App 收到后显示顶部横幅，点「查看」可直接跳进对应会话。
 
 ## 安全提醒
 
@@ -111,5 +126,5 @@ wscat -c "ws://127.0.0.1:8787/ws/events.mux?token=<TOKEN>"
 - 公网访问时，桥接服务前面必须再加一层 HTTPS（Cloudflare Tunnel / ngrok / frp + TLS）。
 - Token 要够长、够随机；建议开启 IP 白名单和限流。
 - 配对二维码只携带一次性配对码，**永远不携带永久 token**；配对码单次有效、默认 3 分钟过期，默认还需电脑端点「允许」。
-- API 采用默认拒绝策略，只放行手机 App 需要的 `session.list/create/models/selectModel/prompt/cancel/history`、`agentPreset.list`、`llm.models`、`workspace.list`（只读，用于选择工作文件夹）与 `respond` 方法；`credentials.*`、`settings.*`、`host.*` 等一律 403。
+- API 采用默认拒绝策略，只放行手机 App 需要的 `session.list/create/models/selectModel/prompt/cancel/history`、`agentPreset.list`、`llm.models`、`workspace.list`（只读，用于选择工作文件夹）与 `respond` 方法；`credentials.*`、`settings.*`、`host.*` 等一律 403。`notify.push` 是本地端点，**仅主 token 可调用**，设备 token 只能接收。
 - 设备 token 可单独吊销（配对页设备列表），吊销立即生效。
